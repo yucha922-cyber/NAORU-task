@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", Meiryo, system-ui, sans-serif;
+  --color-ink: #16181d;
+  --color-gold: #a8894f;
+}
+
+html { -webkit-tap-highlight-color: transparent; }
+body { @apply bg-neutral-50 text-ink antialiased; }
+input, select, textarea { font-size: 16px; } /* iOSのズーム防止 */
+
+@utility card { @apply rounded-2xl border border-neutral-200/80 bg-white; }
+@utility btn { @apply inline-flex items-center justify-center gap-1.5 rounded-xl px-4 h-11 text-sm font-medium disabled:opacity-50; }
+@utility btn-primary { @apply btn bg-ink text-white active:bg-black; }
+@utility btn-ghost { @apply btn border border-neutral-200 bg-white text-ink active:bg-neutral-100; }
+@utility btn-danger { @apply btn border border-red-200 bg-white text-red-600 active:bg-red-50; }
+@utility field { @apply w-full rounded-xl border border-neutral-200 bg-white px-3 h-11 outline-none focus:border-ink; }
+@utility label { @apply mb-1 block text-xs font-medium text-neutral-500; }
+@utility chip { @apply inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium; }
+@utility section-title { @apply mb-2 px-1 text-xs font-semibold tracking-wider text-neutral-500; }
