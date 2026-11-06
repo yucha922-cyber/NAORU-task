@@ -71,8 +71,9 @@ export interface SyncStore {
 export interface EventBody {
   summary: string
   description: string
-  start: { date?: string; dateTime?: string; timeZone?: string }
-  end: { date?: string; dateTime?: string; timeZone?: string }
+  // 終日⇔時間指定を切り替えたとき古い方が残らないよう、使わない側は必ず null を送る（PATCH は項目単位で上書きのため）
+  start: { date: string | null; dateTime: string | null; timeZone: string | null }
+  end: { date: string | null; dateTime: string | null; timeZone: string | null }
   colorId: string | null
   transparency: 'transparent' | 'opaque'
   status: 'confirmed'
@@ -117,13 +118,13 @@ export function buildEvent(t: Task, uid: string, tz = 'Asia/Tokyo'): EventBody {
   if (hasWork) {
     return {
       ...base,
-      start: { dateTime: `${t.work_date}T${t.work_start}:00`, timeZone: tz },
-      end: { dateTime: `${t.work_date}T${t.work_end}:00`, timeZone: tz },
+      start: { date: null, dateTime: `${t.work_date}T${t.work_start}:00`, timeZone: tz },
+      end: { date: null, dateTime: `${t.work_date}T${t.work_end}:00`, timeZone: tz },
       transparency: 'opaque',
     }
   }
   const day = t.due_date ?? t.work_date!
-  return { ...base, start: { date: day }, end: { date: addDays(day, 1) }, transparency: 'transparent' }
+  return { ...base, start: { date: day, dateTime: null, timeZone: null }, end: { date: addDays(day, 1), dateTime: null, timeZone: null }, transparency: 'transparent' }
 }
 
 export const hashEvent = (calendarId: string, b: EventBody) => JSON.stringify([calendarId, b])

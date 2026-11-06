@@ -27,6 +27,13 @@ class FakeGoogle {
     return out
   }
   live(email: string) { return this.events(email).filter((e) => e.status === 'confirmed') }
+  /** Google カレンダー上での見え方（date があれば終日として表示される） */
+  shownAs(email: string) {
+    return [...this.calendars.values()].filter((c) => c.owner === email).flatMap((c) => [...c.events.values()]).map((e) => {
+      const st = e.body.start as { date?: string; dateTime?: string }
+      return st.date ? `終日 ${st.date}` : `時間 ${st.dateTime}`
+    })
+  }
 
   fetch = async (url: string, init: { method?: string; headers?: Record<string, string>; body?: string } = {}) => {
     this.calls++
@@ -58,7 +65,17 @@ class FakeGoogle {
     const ev = c.events.get(parts[3])
     if (m === 'PATCH') {
       if (!ev) return res(404, {})
-      c.events.set(parts[3], { body: { ...ev.body, ...body }, status: body.status ?? ev.status })
+      // 本物の Google と同じ PATCH の動き: 入れ子のオブジェクト（start/end）は項目単位でマージ、null は削除
+      const merged: Record<string, unknown> = { ...ev.body }
+      for (const [k, v] of Object.entries(body)) {
+        if (v && typeof v === 'object' && !Array.isArray(v) && merged[k] && typeof merged[k] === 'object') {
+          const o: Record<string, unknown> = { ...(merged[k] as object) }
+          for (const [k2, v2] of Object.entries(v as object)) { if (v2 === null) delete o[k2]; else o[k2] = v2 }
+          merged[k] = o
+        } else if (v === null) delete merged[k]
+        else merged[k] = v
+      }
+      c.events.set(parts[3], { body: merged, status: body.status ?? ev.status })
       return res(200, { id: parts[3] })
     }
     if (m === 'DELETE') {
@@ -196,6 +213,24 @@ describe('スタッフごとのカレンダーへの同期', () => {
   })
 })
 
+describe('終日 ⇔ 時間指定の切り替え（実機で見つかった不具合）', () => {
+  it('終日で登録後に作業時間を追加 → その時間帯の予定に変わる', async () => {
+    const t = task({ title: 'テスト2', assignee_id: YUSA, due_date: '2026-11-07' }); db.tasks.push(t)
+    await sync(YUSA)
+    expect(g.shownAs(EMAIL[YUSA])).toEqual(['終日 2026-11-07'])
+    Object.assign(t, { work_date: '2026-11-07', work_start: '17:00', work_end: '18:00' })
+    await sync(YUSA)
+    expect(g.shownAs(EMAIL[YUSA])).toEqual(['時間 2026-11-07T17:00:00'])
+  })
+  it('作業時間を消す → 終日に戻る', async () => {
+    const t = task({ assignee_id: YUSA, due_date: '2026-11-07', work_date: '2026-11-07', work_start: '17:00', work_end: '18:00' }); db.tasks.push(t)
+    await sync(YUSA)
+    Object.assign(t, { work_date: null, work_start: null, work_end: null })
+    await sync(YUSA)
+    expect(g.shownAs(EMAIL[YUSA])).toEqual(['終日 2026-11-07'])
+  })
+})
+
 describe('全員向けタスク', () => {
   it('各自のカレンダーに入り、完了表示は本人の状態だけ', async () => {
     const t = task({ title: '日報提出', assignment_mode: 'everyone', assignees: [
@@ -300,7 +335,7 @@ describe('エラー・期限切れ', () => {
 describe('予定の表示形式', () => {
   it('日付のみ → 終日', () => {
     const b = buildEvent(task({ assignee_id: YUSA }), YUSA)
-    expect(b.start).toEqual({ date: TODAY }); expect(b.end).toEqual({ date: '2026-11-07' }); expect(b.transparency).toBe('transparent')
+    expect(b.start).toMatchObject({ date: TODAY, dateTime: null }); expect(b.end).toMatchObject({ date: '2026-11-07' }); expect(b.transparency).toBe('transparent')
   })
   it('締切時刻 → 終日予定に「⏰18:00締切」（30分予定にしない）', () => {
     const b = buildEvent(task({ title: '月次報告', due_time: '18:00' }), YUSA)
@@ -308,7 +343,7 @@ describe('予定の表示形式', () => {
   })
   it('作業時間 → その時間帯に予定、締切は件名と説明に併記', () => {
     const b = buildEvent(task({ title: '撮影', due_date: '2026-11-10', due_time: '18:00', work_date: '2026-11-08', work_start: '10:00', work_end: '12:00' }), YUSA)
-    expect(b.start).toEqual({ dateTime: '2026-11-08T10:00:00', timeZone: 'Asia/Tokyo' })
+    expect(b.start).toEqual({ date: null, dateTime: '2026-11-08T10:00:00', timeZone: 'Asia/Tokyo' })
     expect(b.end.dateTime).toBe('2026-11-08T12:00:00')
     expect(b.summary).toBe('⏰11/10 18:00締切 撮影')
     expect(b.description).toContain('期限: 11/10 18:00')
