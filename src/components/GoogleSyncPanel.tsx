@@ -51,9 +51,14 @@ export function GoogleSyncPanel() {
           <>
             <div className="grid grid-cols-3 gap-2 text-center">
               <div className="rounded-xl bg-neutral-50 py-2"><div className="text-[10px] text-neutral-500">最終同期</div><div className="text-xs font-medium">{fmtTime(g.account?.last_sync_at ?? null)}</div></div>
-              <div className="rounded-xl bg-neutral-50 py-2"><div className="text-[10px] text-neutral-500">成功</div><div className="text-base font-semibold text-emerald-600 tabular-nums">{g.account?.last_success_count ?? 0}</div></div>
-              <div className="rounded-xl bg-neutral-50 py-2"><div className="text-[10px] text-neutral-500">失敗</div><div className={`text-base font-semibold tabular-nums ${g.account?.last_failure_count ? 'text-red-600' : ''}`}>{g.account?.last_failure_count ?? 0}</div></div>
+              <div className="rounded-xl bg-neutral-50 py-2"><div className="text-[10px] text-neutral-500">反映済みの予定</div><div className="text-base font-semibold text-emerald-600 tabular-nums">{g.syncedCount}件</div></div>
+              <div className="rounded-xl bg-neutral-50 py-2"><div className="text-[10px] text-neutral-500">反映できていない</div><div className={`text-base font-semibold tabular-nums ${g.failedLinks.length ? 'text-red-600' : ''}`}>{g.failedLinks.length}件</div></div>
             </div>
+            {g.lastResult && !g.running && (
+              <div className="text-[11px] text-neutral-400">
+                直前の同期：{g.lastResult.synced + g.lastResult.deleted > 0 ? `追加・更新 ${g.lastResult.synced}件 / 削除 ${g.lastResult.deleted}件` : '変更はありませんでした'}{g.lastResult.failed ? ` / 失敗 ${g.lastResult.failed}件` : ''}
+              </div>
+            )}
             <div className="text-xs text-neutral-600">
               {g.running ? '同期中…' : g.pending > 0 ? <>未反映のタスク <b className="text-orange-500">{g.pending}件</b></> : 'すべて反映済みです'}
             </div>

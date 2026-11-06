@@ -32,6 +32,8 @@ interface CalendarSyncState {
   running: boolean
   pending: number
   failedLinks: CalendarLink[]
+  /** Googleカレンダーに反映済みの予定の件数（累計の現在値） */
+  syncedCount: number
   lastResult: SyncResult | null
   error: string | null
   connect(opts?: { forceConsent?: boolean }): Promise<void>
@@ -137,6 +139,7 @@ export function CalendarSyncProvider({ children }: { children: ReactNode }) {
     configured: gcal.isConfigured(),
     account, linked, connected, running, pending, lastResult, error,
     failedLinks: links.filter((l) => l.sync_status === 'error' || l.sync_status === 'reauth_required'),
+    syncedCount: links.filter((l) => l.sync_status === 'synced').length,
     async connect(opts) {
       if (!uid) return
       setError(null)
