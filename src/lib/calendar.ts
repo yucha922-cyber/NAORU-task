@@ -118,6 +118,12 @@ async function call(method: string, path: string, body?: unknown, calendarLevel 
   throw new GoogleError('other', r.status, text.slice(0, 300))
 }
 
+/** 新規作成時は null（項目の消去指示）を送らない */
+function withoutNulls(b: EventBody) {
+  const clean = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null))
+  return { ...clean(b as unknown as Record<string, unknown>), start: clean(b.start), end: clean(b.end) }
+}
+
 const cal = (id: string) => `/calendars/${encodeURIComponent(id)}`
 let requestDelay = 100
 const sleep = (ms: number) => (ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve())
@@ -146,7 +152,7 @@ export const googleCalendarApi: CalendarApi = {
     } catch (e) {
       if (!(e instanceof GoogleError && e.kind === 'not_found')) throw e
       try {
-        await call('POST', `${cal(calendarId)}/events`, { ...body, id: eventId }, true)
+        await call('POST', `${cal(calendarId)}/events`, { ...withoutNulls(body), id: eventId }, true)
       } catch (e2) {
         // 他の端末が同時に作成した → 内容を上書き
         if (e2 instanceof GoogleError && e2.kind === 'conflict') await call('PATCH', `${cal(calendarId)}/events/${eventId}`, body)
