@@ -2,8 +2,18 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { Repo, SessionUser } from './repo'
 import type { Activity, CalendarLink, Member, Role, Store, Task, TaskTemplate } from './types'
 
+const JA: [RegExp, string][] = [
+  [/Invalid login credentials/i, 'メールアドレスまたはパスワードが違います'],
+  [/User already registered/i, 'このメールアドレスは既に登録されています。ログインしてください'],
+  [/Password should be at least/i, 'パスワードが短すぎます（8文字以上にしてください）'],
+  [/Email not confirmed/i, 'メールアドレスの確認が完了していません'],
+  [/rate limit/i, '短時間に操作が集中しました。しばらく待ってから再度お試しください'],
+  [/Failed to fetch|NetworkError/i, '通信できませんでした。電波状況を確認してください'],
+]
+const ja = (m: string) => JA.find(([r]) => r.test(m))?.[1] ?? m
+
 function check<T>(r: { data: T; error: { message: string } | null } | { data: unknown; error: { message: string } }): T {
-  if (r.error) throw new Error(r.error.message)
+  if (r.error) throw new Error(ja(r.error.message))
   return r.data as T
 }
 
