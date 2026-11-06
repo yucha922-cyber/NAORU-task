@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { NavLink } from 'react-router-dom'
 import { useApp } from '../lib/app'
 import { todayStr } from '../lib/dates'
+import { isAssignedTo, statusFor } from '../lib/responsibility'
 import { TaskSheet } from './TaskSheet'
 
 const NAV = [
@@ -16,7 +17,7 @@ export function Layout({ children }: { children: ReactNode }) {
   const { store, tasks, user, toast, setToast } = useApp()
   const [adding, setAdding] = useState(false)
   const today = todayStr()
-  const alerts = tasks.filter((t) => t.status === 'open' && t.assignee_id === user?.id && t.due_date && t.due_date <= today).length
+  const alerts = user ? tasks.filter((t) => isAssignedTo(t, user.id) && statusFor(t, user.id) === 'open' && t.due_date && t.due_date <= today).length : 0
 
   return (
     <div className="mx-auto min-h-dvh max-w-2xl pb-[calc(env(safe-area-inset-bottom)+160px)]">
@@ -50,7 +51,10 @@ export function Layout({ children }: { children: ReactNode }) {
 
       {adding && <TaskSheet onClose={() => setAdding(false)} />}
       {toast && (
-        <div className="fixed inset-x-4 top-16 z-[60] mx-auto max-w-md rounded-xl bg-ink px-4 py-3 text-sm text-white shadow-lg" onClick={() => setToast(null)}>{toast}</div>
+        <div role="status" className={`fixed inset-x-4 top-16 z-[60] mx-auto flex max-w-md items-center gap-3 rounded-xl px-4 py-3 text-sm text-white shadow-lg ${toast.tone === 'error' ? 'bg-red-600' : toast.tone === 'success' ? 'bg-emerald-700' : 'bg-ink'}`}>
+          <span className="flex-1" onClick={() => setToast(null)}>{toast.message}</span>
+          {toast.action && <button className="-my-2 h-10 shrink-0 rounded-lg bg-white/15 px-3 text-sm font-semibold" onClick={toast.action.run}>{toast.action.label}</button>}
+        </div>
       )}
     </div>
   )

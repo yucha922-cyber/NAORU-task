@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { Repo, SessionUser } from './repo'
-import type { Activity, CalendarLink, Member, Role, Store, Task, TaskTemplate } from './types'
+import type { Activity, CalendarLink, GoogleAccount, Member, Role, Store, Task, TaskTemplate } from './types'
 
 const JA: [RegExp, string][] = [
   [/Invalid login credentials/i, 'メールアドレスまたはパスワードが違います'],
@@ -17,7 +17,15 @@ function check<T>(r: { data: T; error: { message: string } | null } | { data: un
   return r.data as T
 }
 
-const trimTime = <T extends { due_time: string | null }>(t: T): T => ({ ...t, due_time: t.due_time ? t.due_time.slice(0, 5) : null })
+const hm = (v: string | null | undefined) => (v ? v.slice(0, 5) : null)
+const trimTime = <T extends { due_time: string | null }>(t: T): T => ({ ...t, due_time: hm(t.due_time) })
+/** タスクと全員向けの完了状態を1クエリで取得（0002 未適用のDBでは '*' にフォールバック） */
+let TASK_SEL = '*, task_assignees(user_id,status,completed_at)'
+type TaskRow = Task & { task_assignees?: Task['assignees'] }
+const toTask = (r: TaskRow): Task => {
+  const { task_assignees, ...t } = r
+  return { ...t, due_time: hm(t.due_time), work_start: hm(t.work_start), work_end: hm(t.work_end), assignment_mode: t.assignment_mode ?? 'single', assignees: task_assignees ?? [] }
+}
 
 export function createSupabaseRepo(url: string, key: string): Repo {
   const sb: SupabaseClient = createClient(url, key, { auth: { persistSession: true, autoRefreshToken: true } })
@@ -72,29 +80,47 @@ export function createSupabaseRepo(url: string, key: string): Repo {
 
     async listTasks(storeId, recentDays) {
       const since = new Date(Date.now() - recentDays * 86400000).toISOString()
+      if (TASK_SEL !== '*') {
+        const probe = await sb.from('tasks').select(TASK_SEL).limit(1)
+        if (probe.error && /task_assignees|relationship/i.test(probe.error.message)) TASK_SEL = '*' // マイグレーション未適用でも既存機能は動かす
+      }
       // 1クエリで取得（未完了 or 直近完了）。通信量を抑えるため必要件数に上限
       const rows = check(
-        await sb.from('tasks').select('*').eq('store_id', storeId).is('deleted_at', null)
+        await sb.from('tasks').select(TASK_SEL).eq('store_id', storeId).is('deleted_at', null)
           .or(`status.eq.open,completed_at.gte.${since}`).order('due_date', { ascending: true, nullsFirst: false }).limit(2000),
       )
-      return (rows as Task[]).map(trimTime)
+      return (rows as unknown as TaskRow[]).map(toTask)
     },
     async listHistory(storeId, offset, limit) {
       const rows = check(
-        await sb.from('tasks').select('*').eq('store_id', storeId).eq('status', 'done').is('deleted_at', null)
+        await sb.from('tasks').select(TASK_SEL).eq('store_id', storeId).eq('status', 'done').is('deleted_at', null)
           .order('completed_at', { ascending: false }).range(offset, offset + limit - 1),
       )
-      return (rows as Task[]).map(trimTime)
+      return (rows as unknown as TaskRow[]).map(toTask)
     },
     async createTask(storeId, input) {
-      const row = check(await sb.from('tasks').insert({ ...input, store_id: storeId, created_by: await uid() }).select().single())
-      return trimTime(row as Task)
+      const row = check(await sb.from('tasks').insert({ ...input, store_id: storeId, created_by: await uid() }).select(TASK_SEL).single())
+      return toTask(row as unknown as TaskRow)
     },
     async updateTask(id, patch) {
-      return trimTime(check(await sb.from('tasks').update(patch).eq('id', id).select().single()) as Task)
+      return toTask(check(await sb.from('tasks').update(patch).eq('id', id).select(TASK_SEL).single()) as unknown as TaskRow)
     },
     async setDone(id, done) {
-      return trimTime(check(await sb.from('tasks').update({ status: done ? 'done' : 'open' }).eq('id', id).select().single()) as Task)
+      return toTask(check(await sb.from('tasks').update({ status: done ? 'done' : 'open' }).eq('id', id).select(TASK_SEL).single()) as unknown as TaskRow)
+    },
+    async setMyDone(id, done) {
+      const me = await uid()
+      const rows = check(await sb.from('task_assignees').update({ status: done ? 'done' : 'open' }).eq('task_id', id).eq('user_id', me).select('task_id')) as unknown[]
+      if (!rows.length) throw new Error('このタスクの担当に含まれていません')
+      return toTask(check(await sb.from('tasks').select(TASK_SEL).eq('id', id).single()) as unknown as TaskRow)
+    },
+    async getTasksByIds(ids) {
+      const out: Task[] = []
+      for (let i = 0; i < ids.length; i += 100) {
+        const rows = check(await sb.from('tasks').select(TASK_SEL).in('id', ids.slice(i, i + 100))) as unknown as TaskRow[]
+        out.push(...rows.map(toTask))
+      }
+      return out
     },
     async deleteTask(id) {
       const now = new Date().toISOString()
@@ -122,16 +148,38 @@ export function createSupabaseRepo(url: string, key: string): Repo {
       return check(await sb.from('task_activity').select('*').eq('store_id', storeId).order('created_at', { ascending: false }).limit(limit)) as Activity[]
     },
 
-    async listCalendarLinks(storeId) {
-      return check(await sb.from('task_calendar_links').select('*').eq('store_id', storeId).eq('user_id', await uid())) as CalendarLink[]
+    async getGoogleAccount() {
+      const rows = check(await sb.from('google_calendar_accounts').select('*').eq('user_id', await uid())) as GoogleAccount[]
+      return rows[0] ?? null
+    },
+    async saveGoogleAccount(patch) {
+      check(await sb.from('google_calendar_accounts').upsert({ ...patch, user_id: await uid(), updated_at: new Date().toISOString() }))
+    },
+    async claimCalendar(calendarId) {
+      const me = await uid()
+      check(await sb.from('google_calendar_accounts').update({ calendar_id: calendarId }).eq('user_id', me).is('calendar_id', null))
+      const rows = check(await sb.from('google_calendar_accounts').select('calendar_id').eq('user_id', me)) as { calendar_id: string }[]
+      return rows[0]?.calendar_id ?? calendarId
+    },
+    async deleteGoogleAccount() {
+      check(await sb.from('google_calendar_accounts').delete().eq('user_id', await uid()))
+    },
+    async listMyCalendarLinks() {
+      return check(await sb.from('task_calendar_links').select('*').eq('user_id', await uid()).limit(5000)) as CalendarLink[]
     },
     async saveCalendarLink(link) {
-      check(await sb.from('task_calendar_links').upsert(link))
+      check(await sb.from('task_calendar_links').upsert({ ...link, updated_at: new Date().toISOString() }))
+    },
+    async deleteCalendarLink(taskId) {
+      check(await sb.from('task_calendar_links').delete().eq('task_id', taskId).eq('user_id', await uid()))
+    },
+    async deleteAllMyCalendarLinks() {
+      check(await sb.from('task_calendar_links').delete().eq('user_id', await uid()))
     },
 
     async exportStore(storeId) {
       const out: Record<string, unknown[]> = {}
-      for (const t of ['stores', 'memberships', 'tasks', 'task_templates', 'task_activity'] as const) {
+      for (const t of ['stores', 'memberships', 'tasks', 'task_assignees', 'task_templates', 'task_activity'] as const) {
         const col = t === 'stores' ? 'id' : 'store_id'
         const all: unknown[] = []
         for (let from = 0; ; from += 1000) {

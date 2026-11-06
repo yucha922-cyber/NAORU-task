@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { AppProvider, useApp } from './lib/app'
+import { CalendarSyncProvider } from './lib/calendarManager'
 import { CalendarPage } from './pages/Calendar'
 import { Home } from './pages/Home'
 import { Login, NoStore } from './pages/Login'
@@ -14,6 +15,7 @@ function Shell() {
   if (!user) return <Login />
   if (!store) return <NoStore />
   return (
+    <CalendarSyncProvider>
     <Layout>
       <Routes>
         <Route path="/" element={<Home />} />
@@ -24,6 +26,7 @@ function Shell() {
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Layout>
+    </CalendarSyncProvider>
   )
 }
 

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { GoogleSyncPanel } from '../components/GoogleSyncPanel'
 import { Empty, Sheet } from '../components/ui'
 import { useApp } from '../lib/app'
 import { repo } from '../lib/client'
@@ -26,6 +27,7 @@ export function Settings() {
         )}
       </section>
 
+      <GoogleSyncPanel />
       {app.isManager && <Templates />}
       {app.role === 'admin' && <Members />}
       {app.isManager && <ActivityLog />}
@@ -63,7 +65,7 @@ function Templates() {
           <button key={t.id} className="flex w-full items-center justify-between px-4 py-3 text-left" onClick={() => setEdit(t)}>
             <div>
               <div className="text-sm">{t.title}</div>
-              <div className="text-[11px] text-neutral-500">{freqLabel(t)}{t.due_time && ` ${t.due_time}まで`}・{app.memberName(t.assignee_id)}</div>
+              <div className="text-[11px] text-neutral-500">{freqLabel(t)}{t.due_time && ` ${t.due_time}まで`}・{t.assignment_mode === 'everyone' ? '全員' : t.assignee_id ? app.memberName(t.assignee_id) : '誰か1人'}</div>
             </div>
             <span className="text-neutral-300">›</span>
           </button>
@@ -80,7 +82,7 @@ function TemplateSheet({ tpl, onClose }: { tpl?: TaskTemplate; onClose(): void }
   const app = useApp()
   const [f, setF] = useState<TemplateInput>(() => tpl ? { ...tpl } : {
     title: '', description: '', assignee_id: null, priority: 'medium', category: 'general', frequency: 'daily',
-    interval_days: 3, weekdays: [1], day_of_month: 1, due_time: null, start_date: todayStr(), end_date: null, active: true,
+    interval_days: 3, weekdays: [1], day_of_month: 1, due_time: null, start_date: todayStr(), end_date: null, active: true, assignment_mode: 'single',
   })
   const [err, setErr] = useState<string | null>(null)
   const set = <K extends keyof TemplateInput>(k: K, v: TemplateInput[K]) => setF((p) => ({ ...p, [k]: v }))
@@ -106,8 +108,10 @@ function TemplateSheet({ tpl, onClose }: { tpl?: TaskTemplate; onClose(): void }
               {Object.entries(CATEGORY_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select></div>
           <div><label className="label">担当</label>
-            <select className="field" value={f.assignee_id ?? ''} onChange={(e) => set('assignee_id', e.target.value || null)}>
-              <option value="">未割当（全員）</option>
+            <select className="field" value={f.assignment_mode === 'everyone' ? '__everyone' : f.assignee_id ?? ''}
+              onChange={(e) => setF((p) => e.target.value === '__everyone' ? { ...p, assignment_mode: 'everyone', assignee_id: null } : { ...p, assignment_mode: 'single', assignee_id: e.target.value || null })}>
+              <option value="__everyone">全員が実施</option>
+              <option value="">未割当（誰か1人）</option>
               {app.members.filter((m) => m.active).map((m) => <option key={m.user_id} value={m.user_id}>{m.profile.display_name}</option>)}
             </select></div>
           <div><label className="label">頻度</label>

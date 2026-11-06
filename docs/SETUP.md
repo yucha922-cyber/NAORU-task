@@ -43,12 +43,28 @@
 5. 公開URLは `https://<プロジェクト名>.pages.dev`（無料。ドメイン購入不要）
 6. 社外に見せたくない場合は Cloudflare Zero Trust Access（Free: 50ユーザーまで）で追加の入口制限も可能（任意）
 
-## 3. Google カレンダー連携（任意）
+## 3. Google カレンダー連携（任意・0円）
 
-1. https://console.cloud.google.com で新規プロジェクト作成。**請求先アカウント（Billing）はリンクしない**
-   - 課金アカウントが無い限り、上限を超えてもエラーになるだけで請求は発生しません
-2. **APIとサービス > ライブラリ** で「Google Calendar API」を有効化
-3. **OAuth 同意画面**: User type「外部」、スコープに `.../auth/calendar.app.created` を追加、テストユーザーにスタッフのGoogleアカウントを登録（テストモードは100人まで）
-   - テストモードでは約7日ごとに再連携が必要になる場合があります。常用する場合は「本番」公開を検討（このスコープは機密性が低い区分のため審査は軽微の見込み。公開前に要確認）
-4. **認証情報 > OAuth クライアント ID**（ウェブアプリ）を作成し、承認済み JavaScript 生成元に `http://localhost:5173` と公開URLを登録
-5. クライアントID を `VITE_GOOGLE_CLIENT_ID` に設定（クライアントシークレットは不要・使用しません）
+各スタッフが自分の Google アカウントを一度連携すると、**本人が実施すべきタスクだけ**が、本人の Google アカウントに自動作成される専用カレンダー「NAORU TASK」に入ります。既存のカレンダー・予定は閲覧も編集もしません（スコープ `calendar.app.created`）。
+
+### 3-1. Supabase（先に実施）
+SQL Editor で `supabase/migrations/0002_calendar_sync_and_everyone_tasks.sql` を実行（既存データは削除されません。再実行しても安全）。
+**⚠ アプリを新しい版に更新する前に必ず実行してください。**
+
+### 3-2. Google Cloud（オーナーが1回だけ）
+1. https://console.cloud.google.com で新規プロジェクト作成（例: naoru-task）。**請求先アカウント（Billing）はリンクしない**
+2. 「APIとサービス」→「ライブラリ」→「Google Calendar API」を有効化
+3. 「Google Auth Platform」（旧: OAuth 同意画面）
+   - アプリ名: NAORU TASK、サポートメール: オーナーのメール、対象: **外部**
+   - データアクセス（スコープ）: `.../auth/calendar.app.created`、`openid`、`.../auth/userinfo.email`
+   - 対象ユーザー: 公開ステータス「テスト中」のまま、**テストユーザーに各スタッフの Google アカウントを追加**（最大100人）
+4. 「クライアント」→「クライアントを作成」→ 種類「ウェブ アプリケーション」
+   - 承認済みの JavaScript 生成元: `https://yucha922-cyber.github.io`（ローカル確認用に `http://localhost:5173` も可）
+   - リダイレクト URI は不要
+5. 表示された **クライアント ID**（`xxxx.apps.googleusercontent.com`）を控える。**クライアントシークレットは使わない・共有しない**
+6. GitHub の Settings → Secrets and variables → Actions → **Variables** に `VITE_GOOGLE_CLIENT_ID` として登録（クライアント ID は公開前提の値）
+
+### 3-3. 制約（テスト中のアプリ）
+- Google の仕様で、テスト中アプリの許可は **同意から7日で失効** します。失効後はアプリの「再認証」で再許可（数タップ）
+- これを解消するには「アプリを公開」→ 本番化が必要。`calendar.app.created` が機微なスコープに分類される場合は Google の審査（無料。プライバシーポリシーページ等が必要）を受けるまで「未確認のアプリ」警告が表示されます。分類は Cloud Console のスコープ追加画面で確認してください
+- アクセストークンは約1時間で切れ、ブラウザのメモリにのみ保持（保存しない）。アプリを閉じている間は同期されません。開いて「反映する」を押すと、その間の変更（他スタッフ・院長による変更や削除も含む）がまとめて反映されます

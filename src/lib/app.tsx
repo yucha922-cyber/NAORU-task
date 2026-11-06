@@ -3,10 +3,16 @@ import { repo } from './client'
 import type { SessionUser } from './repo'
 import type { Member, Role, Store, Task, TaskInput } from './types'
 import { todayStr } from './dates'
-import * as gcal from './calendar'
+import { statusFor } from './responsibility'
 
 const RECENT_DAYS = 31
 const REFRESH_THROTTLE_MS = 60_000
+
+export interface Toast {
+  message: string
+  tone?: 'info' | 'success' | 'error'
+  action?: { label: string; run: () => void }
+}
 
 interface AppState {
   user: SessionUser | null
@@ -17,20 +23,22 @@ interface AppState {
   isManager: boolean
   members: Member[]
   tasks: Task[]
-  toast: string | null
-  setToast(m: string | null): void
+  toast: Toast | null
+  setToast(m: Toast | string | null): void
   selectStore(id: string): void
   reload(): Promise<void>
   memberName(id: string | null): string
+  /** ワンタップ完了（全員向けタスクは自分の分）。完了時は「元に戻す」を表示 */
   toggleDone(t: Task): Promise<void>
   createTask(input: TaskInput): Promise<Task>
   updateTask(id: string, patch: Partial<TaskInput>): Promise<void>
   deleteTask(id: string): Promise<void>
-  /** タスク変更後の追加処理（Googleカレンダー同期など）を登録 */
+  /** タスク変更・再取得後の追加処理（Googleカレンダー同期など）を登録 */
   onTasksChanged(fn: (tasks: Task[]) => void): () => void
 }
 
 const Ctx = createContext<AppState | null>(null)
+// eslint-disable-next-line react-refresh/only-export-components
 export const useApp = () => useContext(Ctx)!
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -40,10 +48,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [storeId, setStoreId] = useState<string | null>(() => localStorage.getItem('naoru-store'))
   const [members, setMembers] = useState<Member[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
-  const [toast, setToast] = useState<string | null>(null)
+  const [toast, setToastState] = useState<Toast | null>(null)
+  const toastTimer = useRef<number | undefined>(undefined)
   const lastLoad = useRef(0)
   const genDay = useRef<string | null>(null)
   const listeners = useRef(new Set<(t: Task[]) => void>())
+
+  const setToast = useCallback((m: Toast | string | null) => {
+    const t = typeof m === 'string' ? { message: m, tone: 'error' as const } : m
+    setToastState(t)
+    clearTimeout(toastTimer.current)
+    if (t) toastTimer.current = window.setTimeout(() => setToastState(null), t.action ? 6000 : t.tone === 'error' ? 8000 : 2500)
+  }, [])
 
   const current = stores.find((s) => s.store.id === storeId) ?? stores[0] ?? null
   const store = current?.store ?? null
@@ -58,7 +74,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!user) { setStores([]); setTasks([]); setMembers([]); return }
     setLoading(true)
     repo.myStores().then(setStores).catch((e) => setToast(e.message)).finally(() => setLoading(false))
-  }, [user])
+  }, [user, setToast])
+
+  const notify = (t: Task[]) => queueMicrotask(() => listeners.current.forEach((l) => l(t)))
 
   const load = useCallback(async (force = false) => {
     if (!store) return
@@ -74,11 +92,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const [m, t] = await Promise.all([repo.listMembers(store.id), repo.listTasks(store.id, RECENT_DAYS)])
       setMembers(m)
       setTasks(t)
-      listeners.current.forEach((l) => l(t))
+      notify(t)
     } catch (e) {
       setToast((e as Error).message)
     }
-  }, [store])
+  }, [store, setToast])
 
   useEffect(() => { lastLoad.current = 0; load(true) }, [load])
   // リアルタイム購読は使わず、画面復帰時に再取得（無料枠の接続数・通信量を節約）
@@ -91,54 +109,77 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const apply = useCallback((fn: (prev: Task[]) => Task[]) => {
     setTasks((prev) => {
       const next = fn(prev)
-      queueMicrotask(() => listeners.current.forEach((l) => l(next)))
+      notify(next)
       return next
     })
   }, [])
 
-  const value = useMemo<AppState>(() => ({
-    user, loading, stores, store, role, members, tasks, toast, setToast,
-    isManager: role === 'manager' || role === 'admin',
-    selectStore(id) { localStorage.setItem('naoru-store', id); setStoreId(id) },
-    reload: () => load(true),
-    memberName(id) {
-      if (!id) return '未割当'
-      return members.find((m) => m.user_id === id)?.profile.display_name || '不明'
-    },
-    async toggleDone(t) {
-      const done = t.status !== 'done'
+  // 安定した参照にする（再描画のたびに購読し直すと、同期のタイマーが毎回リセットされてしまう）
+  const onTasksChanged = useCallback((fn: (t: Task[]) => void) => {
+    listeners.current.add(fn)
+    return () => { listeners.current.delete(fn) }
+  }, [])
+
+  const value = useMemo<AppState>(() => {
+    const replace = (saved: Task) => apply((p) => p.map((x) => (x.id === saved.id ? saved : x)))
+
+    async function setDone(t: Task, done: boolean) {
+      const uid = user!.id
+      const mine = t.assignment_mode === 'everyone' && t.assignees.some((a) => a.user_id === uid)
+      if (t.assignment_mode === 'everyone' && !mine) throw new Error('全員向けタスクは、各自が自分の分を完了にします')
       // 楽観的更新でワンタップ即反映。失敗時は元に戻す
-      apply((p) => p.map((x) => (x.id === t.id ? { ...x, status: done ? 'done' : 'open', completed_at: done ? new Date().toISOString() : null } : x)))
+      const at = done ? new Date().toISOString() : null
+      apply((p) => p.map((x) => x.id !== t.id ? x : mine
+        ? { ...x, assignees: x.assignees.map((a) => (a.user_id === uid ? { ...a, status: done ? 'done' : 'open', completed_at: at } : a)) }
+        : { ...x, status: done ? 'done' : 'open', completed_at: at }))
       try {
-        const saved = await repo.setDone(t.id, done)
-        apply((p) => p.map((x) => (x.id === t.id ? saved : x)))
+        replace(mine ? await repo.setMyDone(t.id, done) : await repo.setDone(t.id, done))
       } catch (e) {
-        apply((p) => p.map((x) => (x.id === t.id ? t : x)))
-        setToast((e as Error).message)
+        replace(t)
+        throw e
       }
-    },
-    async createTask(input) {
-      if (!store) throw new Error('店舗が未選択です')
-      const t = await repo.createTask(store.id, input)
-      apply((p) => [...p, t])
-      return t
-    },
-    async updateTask(id, patch) {
-      const t = await repo.updateTask(id, patch)
-      apply((p) => p.map((x) => (x.id === id ? t : x)))
-    },
-    async deleteTask(id) {
-      await repo.deleteTask(id)
-      // Google連携中なら、このアプリが作成した対応予定も削除（失敗しても削除自体は完了扱い）
-      if (store && gcal.hasToken()) {
-        repo.listCalendarLinks(store.id)
-          .then((ls) => Promise.all(ls.filter((l) => l.task_id === id || tasks.some((t) => t.id === l.task_id && t.parent_id === id)).map(gcal.deleteEvent)))
-          .catch((e) => setToast(`カレンダー予定の削除に失敗: ${(e as Error).message}`))
-      }
-      apply((p) => p.filter((x) => x.id !== id && x.parent_id !== id))
-    },
-    onTasksChanged(fn) { listeners.current.add(fn); return () => { listeners.current.delete(fn) } },
-  }), [user, loading, stores, store, role, members, tasks, toast, load, apply])
+    }
+
+    return {
+      user, loading, stores, store, role, members, tasks, toast, setToast,
+      isManager: role === 'manager' || role === 'admin',
+      selectStore(id) { localStorage.setItem('naoru-store', id); setStoreId(id) },
+      reload: () => load(true),
+      memberName(id) {
+        if (!id) return '未割当'
+        return members.find((m) => m.user_id === id)?.profile.display_name || '不明'
+      },
+      async toggleDone(t) {
+        const done = statusFor(t, user!.id) !== 'done'
+        try {
+          await setDone(t, done)
+          if (done) {
+            setToast({
+              message: `「${t.title}」を完了にしました`, tone: 'success',
+              action: { label: '元に戻す', run: () => { setToast(null); setDone({ ...t }, false).catch((e) => setToast((e as Error).message)) } },
+            })
+          }
+        } catch (e) {
+          setToast(`保存できませんでした：${(e as Error).message}`)
+        }
+      },
+      async createTask(input) {
+        if (!store) throw new Error('店舗が未選択です')
+        const t = await repo.createTask(store.id, input)
+        apply((p) => [...p, t])
+        return t
+      },
+      async updateTask(id, patch) {
+        replace(await repo.updateTask(id, patch))
+      },
+      async deleteTask(id) {
+        // Googleカレンダーの予定は、担当者本人の次回同期で削除される（対応表に基づく）
+        await repo.deleteTask(id)
+        apply((p) => p.filter((x) => x.id !== id && x.parent_id !== id))
+      },
+      onTasksChanged,
+    }
+  }, [user, loading, stores, store, role, members, tasks, toast, load, apply, setToast, onTasksChanged])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

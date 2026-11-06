@@ -4,7 +4,8 @@ import { Bar, Empty, Stat, Tabs } from '../components/ui'
 import { useApp } from '../lib/app'
 import { addDays, todayStr } from '../lib/dates'
 import { inBucket, sortTasks } from '../lib/selectors'
-import type { Category } from '../lib/types'
+import type { Category, Task } from '../lib/types'
+import { isAssignedTo, statusFor } from '../lib/responsibility'
 
 export function Team() {
   const app = useApp()
@@ -20,15 +21,17 @@ export function Team() {
   const staff = app.members.filter((m) => m.active)
 
   // 達成率: 直近7日に期限が来たタスクのうち完了した割合
+  // スタッフ別: 担当タスク + 全員向けタスクの本人分
+  const openOf = (uid: string) => live.filter((t) => isAssignedTo(t, uid) && statusFor(t, uid) === 'open' && !t.parent_id)
   const rate = (uid: string) => {
-    const due = live.filter((t) => t.assignee_id === uid && t.due_date && t.due_date >= weekAgo && t.due_date <= today)
-    const done = due.filter((t) => t.status === 'done').length
+    const due = live.filter((t) => isAssignedTo(t, uid) && t.due_date && t.due_date >= weekAgo && t.due_date <= today)
+    const done = due.filter((t) => statusFor(t, uid) === 'done').length
     return { done, total: due.length, pct: due.length ? Math.round((done / due.length) * 100) : null }
   }
   const reportStatus = (uid: string, cat: Category) => {
-    const ts = live.filter((t) => t.assignee_id === uid && t.category === cat && t.due_date === today)
+    const ts = live.filter((t) => isAssignedTo(t, uid) && t.category === cat && t.due_date === today)
     if (!ts.length) return null
-    return ts.every((t) => t.status === 'done')
+    return ts.every((t: Task) => statusFor(t, uid) === 'done')
   }
   const totalRate = (() => {
     const due = live.filter((t) => t.due_date && t.due_date >= weekAgo && t.due_date <= today)
@@ -54,7 +57,7 @@ export function Team() {
         <div className="space-y-2">
           {staff.map((m) => {
             const r = rate(m.user_id)
-            const mineOpen = open.filter((t) => t.assignee_id === m.user_id && !t.parent_id)
+            const mineOpen = openOf(m.user_id)
             const od = mineOpen.filter((t) => inBucket(t, 'overdue')).length
             return (
               <button key={m.id} className="card w-full p-4 text-left" onClick={() => setWho(m.user_id)}>
@@ -76,8 +79,8 @@ export function Team() {
         <div className="space-y-2">
           <button className="text-sm text-neutral-500" onClick={() => setWho(null)}>‹ スタッフ一覧</button>
           <h2 className="font-semibold">{app.memberName(who)} さんの未完了タスク</h2>
-          {open.filter((t) => t.assignee_id === who && !t.parent_id).sort(sortTasks).map((t) => <TaskItem key={t.id} task={t} showAssignee={false} />)}
-          {!open.some((t) => t.assignee_id === who) && <Empty>未完了タスクはありません</Empty>}
+          {openOf(who).sort(sortTasks).map((t) => <TaskItem key={t.id} task={t} showAssignee={false} />)}
+          {!openOf(who).length && <Empty>未完了タスクはありません</Empty>}
         </div>
       )}
       {view === 'reports' && (
