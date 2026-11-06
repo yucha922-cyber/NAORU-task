@@ -29,7 +29,7 @@ function Shell() {
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, "") || "/"}>
       <AppProvider><Shell /></AppProvider>
     </BrowserRouter>
   )
