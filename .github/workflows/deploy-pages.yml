@@ -31,10 +31,11 @@ jobs:
         env:
           # https://<owner>.github.io/<repo>/ 配下で動かすためのパス
           BASE_PATH: /${{ github.event.repository.name }}/
-          # 未設定ならデモモード（ブラウザ内のみ）で公開される。
-          # Supabase 接続時は Settings > Secrets and variables > Actions > Variables に登録
-          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          # Supabase の接続先（公開用の値。データ保護は RLS が担う）。
+          # Actions Variables に同名の値を登録すると、そちらが優先される
+          # ⚠ service_role / Secret key は絶対にここへ書かないこと
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL || 'https://jofozpnppvrtwkkcdozb.supabase.co' }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY || 'sb_publishable_SLEkEJbF4Q8nVa-ZA8Qsqg_Iw5xnxF6' }}
           VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
       # SPA のため、直接アクセスされた URL（/naoru-task/tasks 等）も index.html で処理
       - run: cp dist/index.html dist/404.html
