@@ -36,7 +36,8 @@ jobs:
           # ⚠ service_role / Secret key は絶対にここへ書かないこと
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL || 'https://jofozpnppvrtwkkcdozb.supabase.co' }}
           VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY || 'sb_publishable_SLEkEJbF4Q8nVa-ZA8Qsqg_Iw5xnxF6' }}
-          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
+          # Google OAuth クライアントID（公開前提の値。クライアントシークレットは使わない）
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID || '222439231144-o9966d0rdsmc503meqieha9uc6dfr06e.apps.googleusercontent.com' }}
       # SPA のため、直接アクセスされた URL（/naoru-task/tasks 等）も index.html で処理
       - run: cp dist/index.html dist/404.html
       - uses: actions/upload-pages-artifact@v3

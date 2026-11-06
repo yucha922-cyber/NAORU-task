@@ -1,172 +1,170 @@
 /**
- * Googleカレンダー一方向同期（アプリ → Google）。
- * - スコープ calendar.app.created: このアプリが作成した「NAORU TASK」カレンダーのみ操作可能。
- *   利用者の既存カレンダー・既存予定は読み取りも編集もできない（無断編集を構造的に防止）。
- * - ブラウザ内で Google Identity Services のトークンを取得。サーバー・秘密鍵不要、課金設定不要。
- * - 内容が変わったタスクだけ送信（ハッシュ比較）して API 呼び出しを最小化。
- * - 失敗は task_calendar_links に記録し、次回同期時に自動再試行（最大5回、以降は手動）。
+ * Google 認証（Google Identity Services）と Calendar API の実装。
+ * - スコープ calendar.app.created: このアプリが作った「NAORU TASK」カレンダーだけを操作できる。
+ *   利用者の既存カレンダー・既存予定は閲覧も編集もできない。
+ * - openid email: 連携した Google アカウントを確認し、別アカウントへの誤同期を防ぐためだけに使用。
+ * - アクセストークンはメモリ上のみ（localStorage・DB・GitHub に保存しない）。ページを閉じると消える。
  */
-import { addDays } from './dates'
-import type { CalendarLink, Task } from './types'
+import { GoogleError, type CalendarApi, type EventBody } from './calendarSync'
 
-export const GOOGLE_CLIENT_ID = (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined) ?? ''
-const SCOPE = 'https://www.googleapis.com/auth/calendar.app.created'
+export const GOOGLE_CLIENT_ID = ((import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined) ?? '').trim()
+export const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.app.created'
+const SCOPES = `${CALENDAR_SCOPE} openid email`
 const API = 'https://www.googleapis.com/calendar/v3'
-const MAX_AUTO_RETRY = 5
 
-interface TokenClient { requestAccessToken(o?: { prompt?: string }): void }
+interface TokenResponse { access_token?: string; expires_in?: number; error?: string; error_description?: string; scope?: string }
+interface TokenClient { requestAccessToken(o?: { prompt?: string; login_hint?: string }): void }
 declare global {
   interface Window {
     google?: { accounts: { oauth2: {
-      initTokenClient(c: { client_id: string; scope: string; callback: (r: { access_token?: string; expires_in?: number; error?: string }) => void }): TokenClient
+      initTokenClient(c: { client_id: string; scope: string; callback: (r: TokenResponse) => void; error_callback?: (e: { type: string }) => void }): TokenClient
+      hasGrantedAllScopes(r: TokenResponse, ...scopes: string[]): boolean
       revoke(token: string, cb?: () => void): void
     } } }
   }
 }
 
-let token: { value: string; exp: number } | null = null
+let token: { value: string; exp: number; appUserId: string; email: string } | null = null
 
 export const isConfigured = () => !!GOOGLE_CLIENT_ID
-export const hasToken = () => !!token && token.exp > Date.now() + 60_000
-const calKey = (userId: string) => `naoru-gcal-calendar:${userId}`
-export const isLinked = (userId: string) => !!localStorage.getItem(calKey(userId))
+export function hasToken(appUserId: string) {
+  return !!token && token.appUserId === appUserId && token.exp > Date.now() + 60_000
+}
+/** アプリのログインユーザーが変わったら必ず破棄（共有端末で他スタッフのトークンを使わない） */
+export function clearToken() {
+  token = null
+}
 
 function loadGis(): Promise<void> {
-  if (window.google?.accounts) return Promise.resolve()
+  if (window.google?.accounts?.oauth2) return Promise.resolve()
   return new Promise((res, rej) => {
     const s = document.createElement('script')
     s.src = 'https://accounts.google.com/gsi/client'
     s.onload = () => res()
-    s.onerror = () => rej(new Error('Googleの認証スクリプトを読み込めませんでした'))
+    s.onerror = () => rej(new AuthFlowError('Googleに接続できませんでした。通信状況を確認してもう一度お試しください。'))
     document.head.appendChild(s)
   })
 }
 
-/** ユーザー操作（ボタン押下）から呼ぶこと。ポップアップで同意画面が出る */
-export async function connect(interactive = true): Promise<void> {
-  if (!GOOGLE_CLIENT_ID) throw new Error('VITE_GOOGLE_CLIENT_ID が未設定です')
+export class AuthFlowError extends Error {}
+
+/**
+ * Google と接続（ボタン押下から呼ぶこと。ブラウザの仕様上、自動では呼べない）。
+ * 2回目以降は同意画面は出ず、アカウント確認だけで完了することが多い。
+ * expectedEmail を指定すると、別の Google アカウントが選ばれた場合は拒否する。
+ */
+export async function connect(appUserId: string, opts: { expectedEmail?: string | null; forceConsent?: boolean } = {}): Promise<string> {
+  if (!GOOGLE_CLIENT_ID) throw new AuthFlowError('Google連携が未設定です。管理者に連絡してください。')
   await loadGis()
-  await new Promise<void>((res, rej) => {
-    const client = window.google!.accounts.oauth2.initTokenClient({
+  const oauth = window.google!.accounts.oauth2
+  const r = await new Promise<TokenResponse>((res, rej) => {
+    const client = oauth.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
-      scope: SCOPE,
-      callback: (r) => {
-        if (r.error || !r.access_token) return rej(new Error(r.error ?? 'Google連携に失敗しました'))
-        token = { value: r.access_token, exp: Date.now() + (r.expires_in ?? 3600) * 1000 }
-        res()
-      },
+      scope: SCOPES,
+      callback: res,
+      error_callback: (e) => rej(new AuthFlowError(
+        e.type === 'popup_closed' ? 'Googleの画面が閉じられました。もう一度ボタンを押してください。'
+          : e.type === 'popup_failed_to_open' ? 'ポップアップがブロックされました。ブラウザでポップアップを許可してから、もう一度押してください。'
+            : 'Googleとの接続を完了できませんでした。もう一度お試しください。')),
     })
-    client.requestAccessToken({ prompt: interactive ? 'consent' : '' })
+    client.requestAccessToken({ prompt: opts.forceConsent ? 'consent' : '', login_hint: opts.expectedEmail ?? undefined })
   })
+  if (r.error || !r.access_token) {
+    throw new AuthFlowError(r.error === 'access_denied' ? 'Googleでの許可がキャンセルされました。連携するには「許可」を選んでください。' : 'Googleとの接続に失敗しました。もう一度お試しください。')
+  }
+  if (!oauth.hasGrantedAllScopes(r, CALENDAR_SCOPE)) {
+    oauth.revoke(r.access_token)
+    throw new AuthFlowError('カレンダーへのアクセスが許可されませんでした。もう一度連携し、カレンダーのチェックをオンにしてください。')
+  }
+  const info = (await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: `Bearer ${r.access_token}` } })
+    .then((x) => (x.ok ? x.json() : null)).catch(() => null)) as { email?: string } | null
+  const email = info?.email?.toLowerCase() ?? ''
+  if (!email) {
+    oauth.revoke(r.access_token)
+    throw new AuthFlowError('Googleアカウントを確認できませんでした。もう一度お試しください。')
+  }
+  if (opts.expectedEmail && email !== opts.expectedEmail.toLowerCase()) {
+    oauth.revoke(r.access_token)
+    throw new AuthFlowError(`別のGoogleアカウント（${email}）が選ばれました。連携済みのアカウント（${opts.expectedEmail}）を選んでください。`)
+  }
+  token = { value: r.access_token, exp: Date.now() + (r.expires_in ?? 3600) * 1000, appUserId, email }
+  return email
 }
 
-export function disconnect(userId: string) {
+export function revoke() {
   if (token) window.google?.accounts.oauth2.revoke(token.value)
   token = null
-  localStorage.removeItem(calKey(userId))
 }
 
-class HttpError extends Error {
-  status: number
-  constructor(status: number, msg: string) { super(msg); this.status = status }
-}
-
-async function call(method: string, path: string, body?: unknown) {
-  if (!hasToken()) throw new HttpError(401, 'Googleの認証期限が切れました。再連携してください')
-  const r = await fetch(API + path, {
-    method,
-    headers: { Authorization: `Bearer ${token!.value}`, 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  })
-  if (!r.ok) throw new HttpError(r.status, `Google API ${r.status}: ${(await r.text()).slice(0, 200)}`)
-  return r.status === 204 ? null : r.json()
-}
-
-async function ensureCalendar(userId: string): Promise<string> {
-  const cached = localStorage.getItem(calKey(userId))
-  if (cached) return cached
-  const cal = await call('POST', '/calendars', { summary: 'NAORU TASK', description: 'NAORU TASK が自動作成したカレンダー', timeZone: 'Asia/Tokyo' })
-  localStorage.setItem(calKey(userId), cal.id)
-  return cal.id
-}
-
-function eventBody(t: Task) {
-  const done = t.status === 'done'
-  const base = {
-    summary: `${done ? '✅ ' : ''}${t.title}`,
-    description: 'NAORU TASK で管理しているタスクです（アプリ側で編集してください）',
-    colorId: done ? '10' : t.priority === 'high' ? '11' : undefined,
-    transparency: 'transparent',
+async function call(method: string, path: string, body?: unknown, calendarLevel = false) {
+  if (!token || token.exp < Date.now()) throw new GoogleError('auth', 401, 'token expired')
+  let r: Response
+  try {
+    r = await fetch(API + path, {
+      method,
+      headers: { Authorization: `Bearer ${token.value}`, 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+    })
+  } catch {
+    throw new GoogleError('network', 0, 'network error')
   }
-  if (t.due_time) {
-    const start = `${t.due_date}T${t.due_time}:00+09:00`
-    const end = new Date(new Date(start).getTime() + 30 * 60_000).toISOString()
-    return { ...base, start: { dateTime: start, timeZone: 'Asia/Tokyo' }, end: { dateTime: end, timeZone: 'Asia/Tokyo' } }
-  }
-  return { ...base, start: { date: t.due_date }, end: { date: addDays(t.due_date!, 1) } }
+  if (r.ok) return r.status === 204 ? null : r.json().catch(() => null)
+  const text = await r.text().catch(() => '')
+  if (r.status === 401) throw new GoogleError('auth', 401, text)
+  if (r.status === 429 || (r.status === 403 && /rateLimit|quota|usageLimits/i.test(text))) throw new GoogleError('rate_limit', r.status, text)
+  if (r.status === 403) throw new GoogleError('auth', 403, text) // 許可の取り消し等
+  if (r.status === 404 || r.status === 410) throw new GoogleError(calendarLevel ? 'calendar_missing' : 'not_found', r.status, text)
+  if (r.status === 409) throw new GoogleError('conflict', 409, text)
+  throw new GoogleError('other', r.status, text.slice(0, 300))
 }
 
-const hashOf = (t: Task) => JSON.stringify([t.title, t.due_date, t.due_time, t.status, t.priority])
+const cal = (id: string) => `/calendars/${encodeURIComponent(id)}`
+let requestDelay = 100
+const sleep = (ms: number) => (ms > 0 ? new Promise((r) => setTimeout(r, ms)) : Promise.resolve())
 
-export interface SyncResult { synced: number; skipped: number; failed: number; stoppedByLimit: boolean }
+/** 単体テスト専用（本番コードからは使用しない） */
+export const __test = {
+  setToken(appUserId: string, email: string, value: string, ttlSec = 3600) { token = { value, appUserId, email, exp: Date.now() + ttlSec * 1000 } },
+  setDelay(ms: number) { requestDelay = ms },
+}
 
-/** 自分が担当で期限ありのタスクを同期 */
-export async function syncTasks(opts: {
-  userId: string
-  storeId: string
-  tasks: Task[]
-  links: CalendarLink[]
-  save: (l: CalendarLink) => Promise<void>
-  forceRetry?: boolean
-}): Promise<SyncResult> {
-  const res: SyncResult = { synced: 0, skipped: 0, failed: 0, stoppedByLimit: false }
-  const calendarId = await ensureCalendar(opts.userId)
-  const linkMap = new Map(opts.links.map((l) => [l.task_id, l]))
-  const targets = opts.tasks.filter((t) => t.assignee_id === opts.userId && t.due_date && !t.deleted_at)
-
-  for (const t of targets) {
-    const link = linkMap.get(t.id)
-    const h = hashOf(t)
-    if (link && link.calendar_id === calendarId && link.sync_status === 'synced' && link.synced_hash === h) { res.skipped++; continue }
-    if (link?.sync_status === 'error' && link.retry_count >= MAX_AUTO_RETRY && !opts.forceRetry) { res.skipped++; continue }
-    const next: CalendarLink = link && link.calendar_id === calendarId
-      ? { ...link }
-      : { task_id: t.id, user_id: opts.userId, store_id: opts.storeId, calendar_id: calendarId, google_event_id: null, sync_status: 'pending', synced_hash: null, last_error: null, retry_count: 0, synced_at: null }
+export const googleCalendarApi: CalendarApi = {
+  async createCalendar() {
+    const c = await call('POST', '/calendars', { summary: 'NAORU TASK', description: 'NAORU TASK が自動作成したカレンダーです（タスクの期限・作業予定）', timeZone: 'Asia/Tokyo' })
+    return c.id as string
+  },
+  async calendarExists(id) {
+    try { await call('GET', cal(id), undefined, true); return true } catch (e) {
+      if (e instanceof GoogleError && (e.kind === 'calendar_missing' || e.kind === 'not_found')) return false
+      throw e
+    }
+  },
+  async upsertEvent(calendarId, eventId, body: EventBody) {
+    await sleep(requestDelay) // 1ユーザーあたりの毎分上限への配慮
     try {
-      let ev
-      if (next.google_event_id) {
-        try {
-          ev = await call('PATCH', `/calendars/${encodeURIComponent(calendarId)}/events/${next.google_event_id}`, eventBody(t))
-        } catch (e) {
-          if (e instanceof HttpError && (e.status === 404 || e.status === 410)) ev = null
-          else throw e
-        }
-      }
-      if (!ev) ev = await call('POST', `/calendars/${encodeURIComponent(calendarId)}/events`, eventBody(t))
-      Object.assign(next, { google_event_id: ev.id, sync_status: 'synced', synced_hash: h, last_error: null, retry_count: 0, synced_at: new Date().toISOString() })
-      res.synced++
+      await call('PATCH', `${cal(calendarId)}/events/${eventId}`, body)
     } catch (e) {
-      Object.assign(next, { sync_status: 'error', last_error: String((e as Error).message).slice(0, 300), retry_count: next.retry_count + 1 })
-      res.failed++
-      if (e instanceof HttpError && e.status === 404 && /calendar/i.test(e.message)) localStorage.removeItem(calKey(opts.userId))
-      if (e instanceof HttpError && (e.status === 429 || e.status === 403 || e.status === 401)) {
-        await opts.save(next)
-        res.stoppedByLimit = true // 上限・認証エラー時はその回の同期を中断（無駄な呼び出しをしない）
-        break
+      if (!(e instanceof GoogleError && e.kind === 'not_found')) throw e
+      try {
+        await call('POST', `${cal(calendarId)}/events`, { ...body, id: eventId }, true)
+      } catch (e2) {
+        // 他の端末が同時に作成した → 内容を上書き
+        if (e2 instanceof GoogleError && e2.kind === 'conflict') await call('PATCH', `${cal(calendarId)}/events/${eventId}`, body)
+        else throw e2
       }
     }
-    await opts.save(next)
-    await new Promise((r) => setTimeout(r, 120)) // レート制限対策
-  }
-  return res
-}
-
-/** タスク削除時、対応する予定を削除（アプリが作成した予定のみ） */
-export async function deleteEvent(link: CalendarLink) {
-  if (!link.google_event_id || !hasToken()) return
-  try {
-    await call('DELETE', `/calendars/${encodeURIComponent(link.calendar_id)}/events/${link.google_event_id}`)
-  } catch (e) {
-    if (!(e instanceof HttpError && (e.status === 404 || e.status === 410))) throw e
-  }
+  },
+  async deleteEvent(calendarId, eventId) {
+    await sleep(requestDelay)
+    try { await call('DELETE', `${cal(calendarId)}/events/${eventId}`) } catch (e) {
+      if (e instanceof GoogleError && (e.kind === 'not_found' || e.kind === 'calendar_missing')) return
+      throw e
+    }
+  },
+  async deleteCalendar(id) {
+    try { await call('DELETE', cal(id), undefined, true) } catch (e) {
+      if (e instanceof GoogleError && (e.kind === 'calendar_missing' || e.kind === 'not_found')) return
+      throw e
+    }
+  },
 }

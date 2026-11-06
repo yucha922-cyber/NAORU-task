@@ -1,13 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { TaskItem } from '../components/TaskItem'
 import { TaskSheet } from '../components/TaskSheet'
 import { Empty } from '../components/ui'
 import { useApp } from '../lib/app'
-import * as gcal from '../lib/calendar'
-import { repo } from '../lib/client'
+import { useCalendarSync } from '../lib/calendarManager'
+import { showInMine, statusFor } from '../lib/responsibility'
 import { addDays, dueState, fmt, todayStr } from '../lib/dates'
 import { sortTasks } from '../lib/selectors'
-import type { CalendarLink } from '../lib/types'
 
 export function CalendarPage() {
   const { tasks, user } = useApp()
@@ -17,7 +17,7 @@ export function CalendarPage() {
   const [adding, setAdding] = useState(false)
   const [scope, setScope] = useState<'mine' | 'all'>('mine')
 
-  const visible = tasks.filter((t) => !t.parent_id && t.due_date && (scope === 'all' || t.assignee_id === user!.id || t.assignee_id === null))
+  const visible = tasks.filter((t) => !t.parent_id && t.due_date && (scope === 'all' || showInMine(t, user!.id)))
   const byDay = useMemo(() => {
     const m = new Map<string, typeof visible>()
     for (const t of visible) m.set(t.due_date!, [...(m.get(t.due_date!) ?? []), t])
@@ -54,8 +54,9 @@ export function CalendarPage() {
           {days.map((d, i) => {
             if (!d) return <div key={i} />
             const ts = byDay.get(d) ?? []
-            const open = ts.filter((t) => t.status === 'open')
-            const dot = open.some((t) => dueState(t) === 'overdue') ? 'bg-red-500' : open.some((t) => dueState(t) === 'soon') ? 'bg-orange-400' : open.length ? 'bg-ink' : ts.length ? 'bg-emerald-500' : ''
+            const open = ts.filter((t) => statusFor(t, user!.id) === 'open')
+            const st = (t: (typeof ts)[number]) => dueState({ status: 'open', due_date: t.due_date })
+            const dot = open.some((t) => st(t) === 'overdue') ? 'bg-red-500' : open.some((t) => st(t) === 'soon') ? 'bg-orange-400' : open.length ? 'bg-ink' : ts.length ? 'bg-emerald-500' : ''
             return (
               <button key={d} onClick={() => setSel(d)}
                 className={`flex h-12 flex-col items-center justify-center rounded-xl text-sm ${d === sel ? 'bg-ink text-white' : d === today ? 'bg-neutral-100 font-semibold' : ''}`}>
@@ -78,86 +79,24 @@ export function CalendarPage() {
         </div>
       </section>
 
-      <GoogleSync />
+      <GoogleStatus />
       {adding && <TaskSheet defaultDate={sel} onClose={() => setAdding(false)} />}
     </div>
   )
 }
 
-function GoogleSync() {
-  const app = useApp()
-  const uid = app.user!.id
-  const [linked, setLinked] = useState(() => gcal.isLinked(uid))
-  const [active, setActive] = useState(gcal.hasToken())
-  const [links, setLinks] = useState<CalendarLink[]>([])
-  const [status, setStatus] = useState<string | null>(null)
-  const running = useRef(false)
-
-  const refreshLinks = () => app.store && repo.listCalendarLinks(app.store.id).then(setLinks).catch(() => {})
-  useEffect(() => { if (linked) refreshLinks() }, [linked]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const run = async (forceRetry = false, tasks = app.tasks) => {
-    if (running.current || !app.store || !gcal.hasToken()) return
-    running.current = true
-    setStatus('同期中…')
-    try {
-      const current = await repo.listCalendarLinks(app.store.id)
-      const r = await gcal.syncTasks({ userId: uid, storeId: app.store.id, tasks, links: current, save: repo.saveCalendarLink, forceRetry })
-      setStatus(`同期完了：送信 ${r.synced}件 / 変更なし ${r.skipped}件${r.failed ? ` / 失敗 ${r.failed}件` : ''}${r.stoppedByLimit ? '（制限・認証エラーのため中断）' : ''}`)
-      setLinked(true)
-    } catch (e) {
-      setStatus(`同期エラー：${(e as Error).message}`)
-    } finally {
-      running.current = false
-      setActive(gcal.hasToken())
-      refreshLinks()
-    }
-  }
-
-  // 連携中はタスク変更時に自動同期（5秒デバウンス・変更分のみ送信）
-  useEffect(() => {
-    if (!active) return
-    let timer: number | undefined
-    const off = app.onTasksChanged((t) => { clearTimeout(timer); timer = window.setTimeout(() => run(false, t), 5000) })
-    return () => { off(); clearTimeout(timer) }
-  }, [active]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const errors = links.filter((l) => l.sync_status === 'error')
-
-  if (!gcal.isConfigured()) {
-    return (
-      <div className="card p-4 text-sm">
-        <div className="font-medium">Googleカレンダー連携</div>
-        <p className="mt-1 text-xs leading-relaxed text-neutral-500">未設定です（管理者が Google OAuth クライアントIDを設定すると利用できます。設定手順は docs/SETUP.md を参照）。</p>
-      </div>
-    )
-  }
+function GoogleStatus() {
+  const g = useCalendarSync()
+  if (!g.configured) return null
   return (
-    <div className="card space-y-3 p-4 text-sm">
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="font-medium">Googleカレンダー連携</div>
-          <div className="text-xs text-neutral-500">{active ? '接続中' : linked ? '連携済み（再接続が必要）' : '未連携'}</div>
+    <Link to="/settings" className="card flex items-center justify-between gap-3 p-4 text-sm">
+      <div>
+        <div className="font-medium">Googleカレンダー連携</div>
+        <div className="text-xs text-neutral-500">
+          {!g.linked ? '未連携 — 自分のタスクをGoogleカレンダーに表示できます' : g.running ? '同期中…' : g.pending ? `未反映 ${g.pending}件` : 'すべて反映済み'}
         </div>
-        {active
-          ? <button className="btn-ghost h-9" onClick={() => run(true)}>今すぐ同期</button>
-          : <button className="btn-primary h-9" onClick={async () => {
-              try { await gcal.connect(!linked); setActive(true); await run() } catch (e) { setStatus((e as Error).message) }
-            }}>{linked ? '再接続' : 'Googleと連携'}</button>}
       </div>
-      <p className="text-xs leading-relaxed text-neutral-500">
-        自分が担当で期限のあるタスクを、専用の「NAORU TASK」カレンダーに反映します（アプリ→Googleの一方向）。既存の予定やカレンダーは閲覧・編集しません。
-      </p>
-      {status && <p className="text-xs text-neutral-600">{status}</p>}
-      {errors.length > 0 && (
-        <div className="rounded-xl bg-red-50 p-3 text-xs text-red-700">
-          同期エラー {errors.length}件（次回同期時に自動再試行。5回失敗したものは「今すぐ同期」で再試行）
-          <div className="mt-1 truncate opacity-80">{errors[0].last_error}</div>
-        </div>
-      )}
-      {linked && (
-        <button className="text-xs text-neutral-400 underline" onClick={() => { gcal.disconnect(uid); setLinked(false); setActive(false); setStatus('連携を解除しました（Google側のカレンダーは手動で削除できます）') }}>連携を解除</button>
-      )}
-    </div>
+      <span className="text-neutral-300">›</span>
+    </Link>
   )
 }

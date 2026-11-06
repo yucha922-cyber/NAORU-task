@@ -4,6 +4,14 @@ export type TaskStatus = 'open' | 'done'
 /** 業務カテゴリ。日報・カルテは院長画面で提出状況を集計する */
 export type Category = 'general' | 'daily_report' | 'karte' | 'cleaning' | 'blog' | 'report'
 export type Frequency = 'daily' | 'weekly' | 'interval' | 'monthly'
+/** single: 担当者1人 or 未割当（誰か1人が実施すれば完了） / everyone: 全員が各自実施 */
+export type AssignmentMode = 'single' | 'everyone'
+
+export interface TaskAssignee {
+  user_id: string
+  status: TaskStatus
+  completed_at: string | null
+}
 
 export interface Store {
   id: string
@@ -49,11 +57,18 @@ export interface Task {
   created_at: string
   updated_at: string
   deleted_at: string | null
+  assignment_mode: AssignmentMode
+  work_date: string | null // 作業日（作業時間を指定する場合）
+  work_start: string | null // HH:MM
+  work_end: string | null // HH:MM
+  /** 全員向けタスクのスタッフ別完了状態（single では空） */
+  assignees: TaskAssignee[]
 }
 
 export type TaskInput = Pick<
   Task,
   'title' | 'description' | 'assignee_id' | 'priority' | 'category' | 'due_date' | 'due_time' | 'parent_id'
+  | 'assignment_mode' | 'work_date' | 'work_start' | 'work_end'
 >
 
 export interface TaskTemplate {
@@ -73,6 +88,7 @@ export interface TaskTemplate {
   end_date: string | null
   last_generated_date: string | null
   active: boolean
+  assignment_mode: AssignmentMode
 }
 
 export type TemplateInput = Omit<TaskTemplate, 'id' | 'store_id' | 'last_generated_date'>
@@ -90,17 +106,31 @@ export interface Activity {
   created_at: string
 }
 
+/** 未同期 / 同期中 / 同期成功 / 同期失敗 / 再認証が必要 */
+export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'error' | 'reauth_required'
+
 export interface CalendarLink {
   task_id: string
   store_id: string
   user_id: string
   calendar_id: string
   google_event_id: string | null
-  sync_status: 'synced' | 'pending' | 'error'
+  sync_status: SyncStatus
   synced_hash: string | null
   last_error: string | null
   retry_count: number
   synced_at: string | null
+}
+
+export interface GoogleAccount {
+  user_id: string
+  google_email: string | null
+  calendar_id: string | null
+  status: 'active' | 'reauth_required' | 'disconnected'
+  last_sync_at: string | null
+  last_success_count: number
+  last_failure_count: number
+  last_error: string | null
 }
 
 export const ROLE_LABEL: Record<Role, string> = { staff: 'スタッフ', manager: '院長', admin: '管理者' }

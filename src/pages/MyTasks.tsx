@@ -5,6 +5,7 @@ import { useApp } from '../lib/app'
 import { repo } from '../lib/client'
 import { effectiveTasks, inBucket, sortTasks, type Bucket } from '../lib/selectors'
 import type { Task } from '../lib/types'
+import { isAssignedTo, isUnassigned, showInMine } from '../lib/responsibility'
 
 type View = Bucket | 'history'
 
@@ -12,7 +13,8 @@ export function MyTasks() {
   const app = useApp()
   const [view, setView] = useState<View>('today')
   const [scope, setScope] = useState<'mine' | 'all'>('mine')
-  const base = effectiveTasks(app.tasks).filter((t) => scope === 'all' || t.assignee_id === app.user!.id || t.assignee_id === null)
+  const uid = app.user!.id
+  const base = effectiveTasks(app.tasks, uid).filter((t) => scope === 'all' || showInMine(t, uid))
   const count = (b: Bucket) => base.filter((t) => inBucket(t, b)).length
   const list = view === 'history' ? [] : base.filter((t) => inBucket(t, view)).sort(sortTasks)
 
@@ -36,7 +38,7 @@ export function MyTasks() {
       ]} />
       {view === 'history' ? <History scope={scope} /> : (
         <div className="space-y-2">
-          {list.length ? list.map((t) => <TaskItem key={t.id} task={t} showAssignee={scope === 'all' || t.assignee_id === null} />) : <Empty>該当するタスクはありません</Empty>}
+          {list.length ? list.map((t) => <TaskItem key={t.id} task={t} showAssignee={scope === 'all' || isUnassigned(t)} />) : <Empty>該当するタスクはありません</Empty>}
         </div>
       )}
     </div>
@@ -56,7 +58,7 @@ function History({ scope }: { scope: 'mine' | 'all' }) {
   }
   // ページ単位で取得（全件取得しない）
   useEffect(() => { load(0).catch((e) => app.setToast(e.message)) }, [app.store?.id]) // eslint-disable-line react-hooks/exhaustive-deps
-  const shown = rows.filter((t) => scope === 'all' || t.assignee_id === app.user!.id)
+  const shown = rows.filter((t) => scope === 'all' || isAssignedTo(t, app.user!.id) || t.completed_by === app.user!.id)
   return (
     <div className="space-y-2">
       {shown.map((t) => (

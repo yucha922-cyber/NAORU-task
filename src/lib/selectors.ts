@@ -1,5 +1,6 @@
 import { addDays, endOfWeek, todayStr } from './dates'
 import type { Task } from './types'
+import { statusFor } from './responsibility'
 
 export type Bucket = 'overdue' | 'today' | 'tomorrow' | 'week' | 'all'
 
@@ -36,9 +37,13 @@ export function progress(tasks: Task[], id: string) {
   return { done, total: c.length, pct: Math.round((done / c.length) * 100) }
 }
 
-/** 期限超過の小項目がある親も「期限超過」に含めて漏れを防ぐ */
-export function effectiveTasks(tasks: Task[]) {
-  const open = tasks.filter((t) => t.status === 'open')
+/**
+ * 一覧に出す未完了タスク（本人視点）。全員向けタスクは本人が完了済みなら除外。
+ * 親が完了済みで未完了の小項目は単独で表示して漏れを防ぐ。
+ */
+export function effectiveTasks(tasks: Task[], uid: string) {
+  const open = tasks.filter((t) => statusFor(t, uid) === 'open')
+  const top = open.filter((t) => !t.parent_id)
   const orphanChildren = open.filter((t) => t.parent_id && !open.some((p) => p.id === t.parent_id))
-  return [...openTopLevel(tasks), ...orphanChildren]
+  return [...top, ...orphanChildren]
 }

@@ -3,7 +3,7 @@
  * 権限ルールは Supabase の RLS と同等の簡易チェックを行う（本番の安全性は RLS が担保）。
  */
 import type { Repo, SessionUser } from './repo'
-import type { Activity, ActivityAction, CalendarLink, Member, Membership, Profile, Role, Store, Task, TaskTemplate } from './types'
+import type { Activity, ActivityAction, CalendarLink, GoogleAccount, Member, Membership, Profile, Role, Store, Task, TaskTemplate } from './types'
 import { addDays, todayStr } from './dates'
 import { pendingOccurrences } from './recurrence'
 
@@ -15,6 +15,7 @@ interface DB {
   templates: TaskTemplate[]
   activity: Activity[]
   links: CalendarLink[]
+  gaccounts?: GoogleAccount[]
   session: string | null
 }
 
@@ -37,7 +38,8 @@ function seed(): DB {
   const mk = (p: Partial<Task>): Task => ({
     id: uuid(), store_id: store.id, parent_id: null, title: '', description: '', assignee_id: null, priority: 'medium',
     category: 'general', due_date: today, due_time: null, status: 'open', completed_at: null, completed_by: null,
-    template_id: null, occurrence_date: null, created_by: boss.id, created_at: now(), updated_at: now(), deleted_at: null, ...p,
+    template_id: null, occurrence_date: null, created_by: boss.id, created_at: now(), updated_at: now(), deleted_at: null,
+    assignment_mode: 'single', work_date: null, work_start: null, work_end: null, assignees: [], ...p,
   })
   const parent = mk({ title: '広告動画を1本制作する', assignee_id: sato.id, priority: 'high', due_date: addDays(today, 5) })
   const subs = ['企画完了', '動画撮影完了', '動画編集完了', '音声追加完了', '最終確認完了'].map((title, i) =>
@@ -51,13 +53,12 @@ function seed(): DB {
   const tpl = (p: Partial<TaskTemplate>): TaskTemplate => ({
     id: uuid(), store_id: store.id, title: '', description: '', assignee_id: null, priority: 'medium', category: 'general',
     frequency: 'daily', interval_days: null, weekdays: [], day_of_month: null, due_time: null,
-    start_date: addDays(today, -2), end_date: null, last_generated_date: null, active: true, ...p,
+    start_date: addDays(today, -2), end_date: null, last_generated_date: null, active: true, assignment_mode: 'single', ...p,
   })
   const templates = [
     tpl({ title: 'カルテ入力', category: 'karte', assignee_id: sato.id, due_time: '21:00' }),
     tpl({ title: 'カルテ入力', category: 'karte', assignee_id: suzuki.id, due_time: '21:00' }),
-    tpl({ title: '日報提出', category: 'daily_report', assignee_id: sato.id, due_time: '22:00' }),
-    tpl({ title: '日報提出', category: 'daily_report', assignee_id: suzuki.id, due_time: '22:00' }),
+    tpl({ title: '日報提出', category: 'daily_report', assignment_mode: 'everyone', due_time: '22:00' }),
     tpl({ title: '店内清掃', category: 'cleaning' }),
     tpl({ title: 'HPBブログ投稿', category: 'blog', frequency: 'interval', interval_days: 3, assignee_id: suzuki.id }),
     tpl({ title: '週次ミーティング準備', frequency: 'weekly', weekdays: [1], assignee_id: boss.id }),
@@ -70,7 +71,14 @@ export function createDemoRepo(): Repo {
   let db: DB = (() => {
     try {
       const raw = localStorage.getItem(KEY)
-      if (raw) return JSON.parse(raw) as DB
+      if (raw) {
+        const d = JSON.parse(raw) as DB
+        // 旧バージョンのデモデータを新しい形式に補完（既存データは保持）
+        d.tasks = d.tasks.map((t) => Object.assign({ assignment_mode: 'single', work_date: null, work_start: null, work_end: null, assignees: [] }, t))
+        d.templates = d.templates.map((t) => Object.assign({ assignment_mode: 'single' }, t))
+        d.gaccounts ??= []
+        return d
+      }
     } catch { /* 破損時は初期化 */ }
     return seed()
   })()
@@ -94,6 +102,8 @@ export function createDemoRepo(): Repo {
     if (!t) throw new Error('タスクが見つかりません')
     return t
   }
+  const everyoneRows = (storeId: string) =>
+    db.memberships.filter((m) => m.store_id === storeId && m.active).map((m) => ({ user_id: m.user_id, status: 'open' as const, completed_at: null }))
   const canEdit = (t: Task) => isManager(t.store_id) || t.assignee_id === db.session || t.assignee_id === null || t.created_by === db.session
   const log = (t: Task, action: ActivityAction, changes: Record<string, unknown> = {}) =>
     db.activity.unshift({ id: uuid(), store_id: t.store_id, task_id: t.id, task_title: t.title, actor_id: db.session, action, changes, created_at: now() })
@@ -161,9 +171,11 @@ export function createDemoRepo(): Repo {
         const p = findTask(input.parent_id)
         if (p.parent_id) throw new Error('親子タスクは2階層までです')
       }
+      if (input.assignment_mode === 'everyone' && input.assignee_id) throw new Error('全員向けタスクには担当者を指定できません')
       const t: Task = {
         id: uuid(), store_id: storeId, status: 'open', completed_at: null, completed_by: null, template_id: null, occurrence_date: null,
         created_by: me(), created_at: now(), updated_at: now(), deleted_at: null, ...input,
+        assignees: input.assignment_mode === 'everyone' ? everyoneRows(storeId) : [],
       }
       db.tasks.push(t); log(t, 'create'); save(); return t
     },
@@ -176,6 +188,9 @@ export function createDemoRepo(): Repo {
         const old = (t as unknown as Record<string, unknown>)[k]
         if (old !== v) changes[k] = { from: old, to: v }
       }
+      if (patch.assignment_mode && patch.assignment_mode !== t.assignment_mode) {
+        t.assignees = patch.assignment_mode === 'everyone' ? everyoneRows(t.store_id) : []
+      }
       Object.assign(t, patch, { updated_at: now() })
       if (Object.keys(changes).length) log(t, 'update', changes)
       save(); return t
@@ -187,6 +202,18 @@ export function createDemoRepo(): Repo {
       Object.assign(t, done ? { status: 'done', completed_at: now(), completed_by: db.session } : { status: 'open', completed_at: null, completed_by: null }, { updated_at: now() })
       log(t, done ? 'complete' : 'reopen'); save(); return t
     },
+    async setMyDone(id, done) {
+      const t = findTask(id)
+      const row = t.assignees.find((a) => a.user_id === db.session)
+      if (!row) throw new Error('このタスクの担当に含まれていません')
+      Object.assign(row, done ? { status: 'done', completed_at: now() } : { status: 'open', completed_at: null })
+      log(t, done ? 'complete' : 'reopen', { assignee: db.session })
+      const allDone = t.assignees.every((a) => a.status === 'done')
+      if (allDone && t.status === 'open') Object.assign(t, { status: 'done', completed_at: now(), completed_by: db.session })
+      if (!allDone && t.status === 'done') Object.assign(t, { status: 'open', completed_at: null, completed_by: null })
+      save(); return t
+    },
+    async getTasksByIds(ids) { return db.tasks.filter((t) => ids.includes(t.id)) },
     async deleteTask(id) {
       const t = findTask(id)
       if (!canEdit(t)) throw new Error('権限がありません')
@@ -218,7 +245,10 @@ export function createDemoRepo(): Repo {
             id: uuid(), store_id: storeId, parent_id: null, title: tpl.title, description: tpl.description, assignee_id: tpl.assignee_id,
             priority: tpl.priority, category: tpl.category, due_date: d, due_time: tpl.due_time, status: 'open', completed_at: null,
             completed_by: null, template_id: tpl.id, occurrence_date: d, created_by: me(), created_at: now(), updated_at: now(), deleted_at: null,
+            assignment_mode: tpl.assignment_mode, work_date: null, work_start: null, work_end: null,
+            assignees: tpl.assignment_mode === 'everyone' ? everyoneRows(storeId) : [],
           }
+          if (tpl.assignment_mode === 'everyone') t.assignee_id = null
           db.tasks.push(t); n++
         }
         if (!tpl.last_generated_date || tpl.last_generated_date < until) tpl.last_generated_date = until
@@ -227,10 +257,27 @@ export function createDemoRepo(): Repo {
     },
 
     async listActivity(storeId, limit) { requireMember(storeId); return db.activity.filter((a) => a.store_id === storeId).slice(0, limit) },
-    async listCalendarLinks(storeId) { return db.links.filter((l) => l.store_id === storeId && l.user_id === db.session) },
+    async getGoogleAccount() { return db.gaccounts?.find((a) => a.user_id === db.session) ?? null },
+    async saveGoogleAccount(patch) {
+      const list = (db.gaccounts ??= [])
+      const cur = list.find((a) => a.user_id === me())
+      if (cur) Object.assign(cur, patch)
+      else list.push({ user_id: me(), google_email: null, calendar_id: null, status: 'active', last_sync_at: null, last_success_count: 0, last_failure_count: 0, last_error: null, ...patch })
+      save()
+    },
+    async claimCalendar(calendarId) {
+      const cur = db.gaccounts?.find((a) => a.user_id === me())
+      if (cur && !cur.calendar_id) { cur.calendar_id = calendarId; save() }
+      return cur?.calendar_id ?? calendarId
+    },
+    async deleteGoogleAccount() { db.gaccounts = (db.gaccounts ?? []).filter((a) => a.user_id !== me()); save() },
+    async listMyCalendarLinks() { return db.links.filter((l) => l.user_id === db.session) },
     async saveCalendarLink(link) {
+      if (link.user_id !== me()) throw new Error('権限がありません')
       db.links = db.links.filter((l) => !(l.task_id === link.task_id && l.user_id === link.user_id)).concat(link); save()
     },
+    async deleteCalendarLink(taskId) { db.links = db.links.filter((l) => !(l.task_id === taskId && l.user_id === db.session)); save() },
+    async deleteAllMyCalendarLinks() { db.links = db.links.filter((l) => l.user_id !== db.session); save() },
     async exportStore(storeId) {
       requireMember(storeId)
       return {
