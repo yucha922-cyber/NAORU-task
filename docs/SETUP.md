@@ -23,11 +23,22 @@
 9. （任意）毎日 0:05 の自動生成: **Database > Extensions** で `pg_cron` を有効化し、SQL ファイル末尾のコメントの `cron.schedule(...)` を実行
    - 設定しなくても、誰かがアプリを開いた時点で当日・翌日分が自動生成されます
 
-## 2. Cloudflare Pages（公開）
+## 2a. GitHub Pages（現在の公開方法・無料）
+
+`main` に push すると `.github/workflows/deploy-pages.yml` が自動でビルドし、
+`https://yucha922-cyber.github.io/naoru-task/` に公開します（公開リポジトリでは Actions・Pages とも無料）。
+
+- 初回のみ: リポジトリ **Settings > Pages > Build and deployment > Source** を **「GitHub Actions」** に変更
+- Supabase 未設定の間は **デモモード**（データはブラウザ内のみ）で表示されます
+- Supabase 接続時: **Settings > Secrets and variables > Actions > Variables** に `VITE_SUPABASE_URL` `VITE_SUPABASE_ANON_KEY`（任意で `VITE_GOOGLE_CLIENT_ID`）を登録し、Actions から再実行
+- 注意: GitHub Pages の規約は「SaaS など主に商用目的のサイトの無料ホスティング」を認めていません。社内ツールの試用・デモ用途に留め、本番運用は下記の Cloudflare Pages（商用利用可）への移行を推奨します
+- 注意: 公開リポジトリのため、ソースコードは誰でも閲覧できます（秘密情報は含めていません。anon キーも公開前提のキーです）
+
+## 2b. Cloudflare Pages（本番運用の推奨先）
 
 1. https://dash.cloudflare.com でサインアップ（Free。カード登録不要）
 2. **Workers & Pages > Create > Pages > Connect to Git** でこの GitHub リポジトリを選択
-3. ビルド設定: Framework `Vite` / Build command `npm run build` / Output `dist`
+3. ビルド設定: Framework `Vite` / Build command `npm run build` / Output `dist`（`BASE_PATH` は設定不要）
 4. 環境変数に `VITE_SUPABASE_URL` `VITE_SUPABASE_ANON_KEY`（必要なら `VITE_GOOGLE_CLIENT_ID`）を設定
 5. 公開URLは `https://<プロジェクト名>.pages.dev`（無料。ドメイン購入不要）
 6. 社外に見せたくない場合は Cloudflare Zero Trust Access（Free: 50ユーザーまで）で追加の入口制限も可能（任意）
