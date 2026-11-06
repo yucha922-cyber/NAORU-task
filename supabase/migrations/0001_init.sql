@@ -415,6 +415,13 @@ grant execute on function public.create_store(text) to authenticated;
 grant execute on function public.add_member_by_email(uuid, text, public.member_role) to authenticated;
 grant execute on function public.generate_recurring_tasks(uuid) to authenticated;
 
+-- ========== テーブル権限（明示。データ保護は RLS が担う） ==========
+-- ログイン済みユーザーのみ操作可能（RLS の範囲内）。未ログイン(anon)からは一切アクセス不可
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on all tables in schema public to authenticated;
+grant usage, select on all sequences in schema public to authenticated;
+revoke all on all tables in schema public from anon;
+
 -- ========== 任意: pg_cron による毎日の自動生成（Free プランで利用可） ==========
 -- ダッシュボード > Database > Extensions で pg_cron を有効化後、以下を実行（毎日 0:05 JST = 15:05 UTC）
 -- select cron.schedule('naoru-generate-recurring', '5 15 * * *', $$select public.generate_recurring_tasks_all()$$);
