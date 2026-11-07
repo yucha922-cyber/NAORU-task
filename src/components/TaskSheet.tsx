@@ -3,7 +3,7 @@ import { useApp } from '../lib/app'
 import { addDays, endOfWeek, todayStr } from '../lib/dates'
 import { childrenOf } from '../lib/selectors'
 import { CATEGORY_LABEL, PRIORITY_LABEL, type Category, type Priority, type Task, type TaskInput } from '../lib/types'
-import { Sheet } from './ui'
+import { ColorPicker, Sheet } from './ui'
 
 const EVERYONE = '__everyone'
 
@@ -12,13 +12,13 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
   const app = useApp()
   const parent = app.tasks.find((t) => t.id === (task?.parent_id ?? parentId))
   const [f, setF] = useState<TaskInput>(() => task
-    ? { title: task.title, description: task.description, assignee_id: task.assignee_id, priority: task.priority, category: task.category, due_date: task.due_date, due_time: task.due_time, parent_id: task.parent_id, assignment_mode: task.assignment_mode, work_date: task.work_date, work_start: task.work_start, work_end: task.work_end }
-    : { title: '', description: '', assignee_id: parent?.assignee_id ?? app.user!.id, priority: 'medium', category: 'general', due_date: defaultDate ?? todayStr(), due_time: null, parent_id: parentId ?? null, assignment_mode: 'single', work_date: null, work_start: null, work_end: null })
+    ? { title: task.title, description: task.description, assignee_id: task.assignee_id, priority: task.priority, category: task.category, due_date: task.due_date, due_time: task.due_time, parent_id: task.parent_id, assignment_mode: task.assignment_mode, work_date: task.work_date, work_start: task.work_start, work_end: task.work_end, color_id: task.color_id ?? null }
+    : { title: '', description: '', assignee_id: parent?.assignee_id ?? app.user!.id, priority: 'medium', category: 'general', due_date: defaultDate ?? todayStr(), due_time: null, parent_id: parentId ?? null, assignment_mode: 'single', work_date: null, work_start: null, work_end: null, color_id: parent?.color_id ?? null })
   const [subs, setSubs] = useState('')
   const [phase, setPhase] = useState<'idle' | 'saving'>('idle')
   const [err, setErr] = useState<string | null>(null)
   // 不要な項目は折りたたむ（既に値がある場合だけ最初から開く）
-  const [details, setDetails] = useState(() => !!task && !!(task.due_time || task.work_start || task.description || task.category !== 'general'))
+  const [details, setDetails] = useState(() => !!task && !!(task.due_time || task.work_start || task.description || task.category !== 'general' || task.color_id))
   const kids = task ? childrenOf(app.tasks, task.id) : []
   const isChild = !!(task?.parent_id ?? parentId)
   const busy = phase === 'saving'
@@ -62,7 +62,7 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
 
   async function createSubs(p: Task) {
     for (const title of subs.split('\n').map((s) => s.trim()).filter(Boolean)) {
-      await app.createTask({ title, description: '', assignee_id: p.assignee_id, priority: p.priority, category: 'general', due_date: p.due_date, due_time: null, parent_id: p.id, assignment_mode: p.assignment_mode, work_date: null, work_start: null, work_end: null })
+      await app.createTask({ title, description: '', assignee_id: p.assignee_id, priority: p.priority, category: 'general', due_date: p.due_date, due_time: null, parent_id: p.id, assignment_mode: p.assignment_mode, work_date: null, work_start: null, work_end: null, color_id: p.color_id ?? null })
     }
     setSubs('')
   }
@@ -122,7 +122,7 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
         {f.assignment_mode === 'everyone' && <p className="-mt-2 text-[11px] text-sky-700">スタッフ全員が各自で完了にします。各自のGoogleカレンダーにも入ります。</p>}
         {f.assignment_mode === 'single' && !f.assignee_id && <p className="-mt-2 text-[11px] text-amber-700">誰か1人が完了にすれば完了です（Googleカレンダーには入りません）。</p>}
 
-        <button type="button" className="min-h-11 text-sm text-neutral-500" onClick={() => setDetails(!details)}>{details ? '▴ 詳細を閉じる' : '▾ 詳細（時刻・作業時間・種類・メモ）'}</button>
+        <button type="button" className="min-h-11 text-sm text-neutral-500" onClick={() => setDetails(!details)}>{details ? '▴ 詳細を閉じる' : '▾ 詳細（時刻・作業時間・色・種類・メモ）'}</button>
         {details && (
           <div className="space-y-4 rounded-2xl bg-neutral-50 p-3">
             <div>
@@ -143,6 +143,13 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
                 </>
               )}
             </div>
+            {!isChild && (
+              <div>
+                <label className="label">Googleカレンダーでの色</label>
+                <ColorPicker value={f.color_id} onChange={(v) => set('color_id', v)} />
+                <p className="mt-1 text-[11px] text-neutral-400">緑（バジル）は「完了」の目印のため選べません</p>
+              </div>
+            )}
             <div>
               <label className="label">種類</label>
               <select className="field" value={f.category} onChange={(e) => set('category', e.target.value as Category)}>

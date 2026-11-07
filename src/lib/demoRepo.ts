@@ -39,7 +39,7 @@ function seed(): DB {
     id: uuid(), store_id: store.id, parent_id: null, title: '', description: '', assignee_id: null, priority: 'medium',
     category: 'general', due_date: today, due_time: null, status: 'open', completed_at: null, completed_by: null,
     template_id: null, occurrence_date: null, created_by: boss.id, created_at: now(), updated_at: now(), deleted_at: null,
-    assignment_mode: 'single', work_date: null, work_start: null, work_end: null, assignees: [], ...p,
+    assignment_mode: 'single', color_id: null, work_date: null, work_start: null, work_end: null, assignees: [], ...p,
   })
   const parent = mk({ title: '広告動画を1本制作する', assignee_id: sato.id, priority: 'high', due_date: addDays(today, 5) })
   const subs = ['企画完了', '動画撮影完了', '動画編集完了', '音声追加完了', '最終確認完了'].map((title, i) =>
@@ -53,7 +53,7 @@ function seed(): DB {
   const tpl = (p: Partial<TaskTemplate>): TaskTemplate => ({
     id: uuid(), store_id: store.id, title: '', description: '', assignee_id: null, priority: 'medium', category: 'general',
     frequency: 'daily', interval_days: null, weekdays: [], day_of_month: null, due_time: null,
-    start_date: addDays(today, -2), end_date: null, last_generated_date: null, active: true, assignment_mode: 'single', ...p,
+    start_date: addDays(today, -2), end_date: null, last_generated_date: null, active: true, assignment_mode: 'single', color_id: null, ...p,
   })
   const templates = [
     tpl({ title: 'カルテ入力', category: 'karte', assignee_id: sato.id, due_time: '21:00' }),
@@ -74,8 +74,8 @@ export function createDemoRepo(): Repo {
       if (raw) {
         const d = JSON.parse(raw) as DB
         // 旧バージョンのデモデータを新しい形式に補完（既存データは保持）
-        d.tasks = d.tasks.map((t) => Object.assign({ assignment_mode: 'single', work_date: null, work_start: null, work_end: null, assignees: [] }, t))
-        d.templates = d.templates.map((t) => Object.assign({ assignment_mode: 'single' }, t))
+        d.tasks = d.tasks.map((t) => Object.assign({ assignment_mode: 'single', color_id: null, work_date: null, work_start: null, work_end: null, assignees: [] }, t))
+        d.templates = d.templates.map((t) => Object.assign({ assignment_mode: 'single', color_id: null }, t))
         d.gaccounts ??= []
         return d
       }
@@ -245,7 +245,7 @@ export function createDemoRepo(): Repo {
             id: uuid(), store_id: storeId, parent_id: null, title: tpl.title, description: tpl.description, assignee_id: tpl.assignee_id,
             priority: tpl.priority, category: tpl.category, due_date: d, due_time: tpl.due_time, status: 'open', completed_at: null,
             completed_by: null, template_id: tpl.id, occurrence_date: d, created_by: me(), created_at: now(), updated_at: now(), deleted_at: null,
-            assignment_mode: tpl.assignment_mode, work_date: null, work_start: null, work_end: null,
+            assignment_mode: tpl.assignment_mode, color_id: tpl.color_id ?? null, work_date: null, work_start: null, work_end: null,
             assignees: tpl.assignment_mode === 'everyone' ? everyoneRows(storeId) : [],
           }
           if (tpl.assignment_mode === 'everyone') t.assignee_id = null
