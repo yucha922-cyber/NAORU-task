@@ -1,6 +1,10 @@
 import type { TaskTemplate } from './types'
 import { addDays, diffDays, parseDate } from './dates'
 
+/** 繰り返し設定が変わったことを画面に知らせる（カレンダーの予定表示を更新するため） */
+export const TEMPLATES_CHANGED = 'naoru:templates-changed'
+export const notifyTemplatesChanged = () => window.dispatchEvent(new Event(TEMPLATES_CHANGED))
+
 /** 取りこぼし復旧時に遡る最大日数（大量生成の防止） */
 export const MAX_CATCHUP_DAYS = 7
 
