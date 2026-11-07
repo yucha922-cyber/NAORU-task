@@ -215,7 +215,7 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
               <div>
                 <label className="label">Googleカレンダーでの色</label>
                 <ColorPicker value={f.color_id} onChange={(v) => set('color_id', v)} />
-                <p className="mt-1 text-[11px] text-neutral-400">緑（バジル）は「完了」の目印のため選べません</p>
+                <p className="mt-1 text-[11px] text-neutral-400">グレー（グラファイト）と緑（バジル）は「完了」の目印のため選べません</p>
               </div>
             )}
             <div>

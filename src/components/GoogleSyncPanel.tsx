@@ -80,7 +80,7 @@ export function GoogleSyncPanel() {
         {g.linked && (
           <div className="rounded-xl bg-neutral-50 p-3 text-[11px] leading-relaxed text-neutral-600">
             <b>Googleカレンダーで完了にする方法</b><br />
-            予定を開いて ✏️編集 →「色」を<b>バジル（緑）</b>にする、または件名の先頭に<b>「✅」か「完了」</b>を付けて保存。<br />
+            予定を開いて ✏️編集 →「色」を<b>グラファイト（グレー）</b>にする、または件名の先頭に<b>「✔」か「完了」</b>を付けて保存。<br />
             次にこのアプリを開いて同期したときに、アプリでも完了になります。
           </div>
         )}

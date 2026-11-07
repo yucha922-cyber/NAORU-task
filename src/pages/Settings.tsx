@@ -35,7 +35,9 @@ export function Settings() {
       {app.isManager && <Backup />}
 
       <button className="btn-ghost w-full" onClick={() => repo.signOut()}>ログアウト</button>
-      <p className="text-center text-[11px] text-neutral-400">NAORU TASK MVP・{repo.mode === 'demo' ? 'デモモード' : 'Supabase接続'}</p>
+      <p className="text-center text-[11px] text-neutral-400">
+        NAORU TASK・{repo.mode === 'demo' ? 'デモモード' : 'Supabase接続'}・バージョン {new Date(__BUILD_TIME__).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+      </p>
     </div>
   )
 }

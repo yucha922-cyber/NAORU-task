@@ -67,6 +67,12 @@ class FakeGoogle {
       return res(200, { id: body.id })
     }
     const ev = c.events.get(parts[3])
+    if (m === 'PUT') {
+      // 本物と同じ: 送られた内容で丸ごと置き換え（送らなかった項目は消える）
+      if (!ev) return res(404, {})
+      c.events.set(parts[3], { body: { ...body }, status: body.status ?? 'confirmed' })
+      return res(200, { id: parts[3] })
+    }
     if (m === 'PATCH') {
       if (!ev) return res(404, {})
       // 本物の Google と同じ PATCH の動き: 入れ子のオブジェクト（start/end）は項目単位でマージ、null は削除
@@ -210,7 +216,7 @@ describe('スタッフごとのカレンダーへの同期', () => {
     await sync(YUSA)
     t.status = 'done'
     await sync(YUSA)
-    expect(g.live(EMAIL[YUSA])[0].summary).toBe('✅ 完了 日報')
+    expect(g.live(EMAIL[YUSA])[0].summary).toBe('✔ 日報')
     t.status = 'open'
     await sync(YUSA)
     expect(g.live(EMAIL[YUSA])[0].summary).toBe('日報')
@@ -224,6 +230,33 @@ describe('スタッフごとのカレンダーへの同期', () => {
     expect(g.live(EMAIL[YUSA])).toHaveLength(1)
     expect(g.events(EMAIL[YUSA])).toHaveLength(1)
   })
+})
+
+describe('色・書式の更新（実機で見つかった不具合）', () => {
+  const ev = (taskId: string) => { for (const c of g.calendars.values()) { const e = c.events.get(eventIdFor(taskId)); if (e) return e.body } }
+  it('色を「標準」に戻すと Google 側の色指定も消える（null を送らない）', async () => {
+    const t = task({ title: '色', assignee_id: YUSA, color_id: '11' }); db.tasks.push(t)
+    await sync(YUSA)
+    expect(ev(t.id)!.colorId).toBe('11')
+    t.color_id = null
+    await sync(YUSA, { verifyCalendar: false })
+    expect('colorId' in ev(t.id)!).toBe(false)
+  })
+  it('書式の変更（旧バージョンの「‼」付き予定など）は全予定を一度だけ送り直して上書きする', async () => {
+    const t = task({ title: '褒章授与式', assignee_id: YUSA, priority: 'high' }); db.tasks.push(t)
+    await sync(YUSA)
+    editInGoogleRaw(t.id, { summary: '‼ 褒章授与式', colorId: '11' }) // 旧バージョンが書いた状態
+    db.links = db.links.map((l) => ({ ...l, synced_hash: JSON.stringify([l.calendar_id, { summary: '‼ 褒章授与式' }]) })) // 旧形式の記録
+    const r = await sync(YUSA, { verifyCalendar: false })
+    expect(r.synced).toBe(1)
+    expect(ev(t.id)!.summary).toBe('褒章授与式')
+    expect('colorId' in ev(t.id)!).toBe(false)
+    const r2 = await sync(YUSA, { verifyCalendar: false })
+    expect(r2.synced).toBe(0) // 2回目以降は送らない
+  })
+  function editInGoogleRaw(taskId: string, patch: Record<string, unknown>) {
+    for (const c of g.calendars.values()) { const e = c.events.get(eventIdFor(taskId)); if (e) Object.assign(e.body, patch) }
+  }
 })
 
 describe('終日 ⇔ 時間指定の切り替え（実機で見つかった不具合）', () => {
@@ -277,14 +310,14 @@ describe('Google側での完了操作 → アプリも完了', () => {
   const editInGoogle = (taskId: string, patch: Record<string, unknown>) => {
     for (const c of g.calendars.values()) { const e = c.events.get(eventIdFor(taskId)); if (e) Object.assign(e.body, patch) }
   }
-  it('色を緑（バジル）にする → アプリで完了、予定は「✅ 完了」表示に', async () => {
+  it('色をグレー（グラファイト）にする → アプリで完了、予定は「✔」表示に', async () => {
     const t = task({ title: 'テスト3', assignee_id: YUSA }); db.tasks.push(t)
     await sync(YUSA)
-    editInGoogle(t.id, { colorId: '10' })
+    editInGoogle(t.id, { colorId: '8' })
     const r = await sync(YUSA, { verifyCalendar: false })
     expect(r.completedFromGoogle).toBe(1)
     expect(t.status).toBe('done')
-    expect(g.live(EMAIL[YUSA])[0].summary).toBe('✅ 完了 テスト3')
+    expect(g.live(EMAIL[YUSA])[0].summary).toBe('✔ テスト3')
   })
   it('件名の先頭に「✅」や「完了」を付ける → アプリで完了', async () => {
     const a = task({ title: 'A', assignee_id: YUSA }), b = task({ title: 'B', assignee_id: YUSA }); db.tasks.push(a, b)
@@ -335,7 +368,7 @@ describe('全員向けタスク', () => {
       { user_id: YUSA, status: 'done', completed_at: 'x' }, { user_id: SHOKO, status: 'open', completed_at: null }] })
     db.tasks.push(t)
     await sync(YUSA); await sync(SHOKO)
-    expect(g.live(EMAIL[YUSA])[0].summary).toBe('✅ 完了 日報提出')
+    expect(g.live(EMAIL[YUSA])[0].summary).toBe('✔ 日報提出')
     expect(g.live(EMAIL[SHOKO])[0].summary).toBe('日報提出')
   })
   it('対象外のスタッフには同期しない', async () => {
@@ -447,10 +480,10 @@ describe('予定の表示形式', () => {
     expect(b.summary).toBe('⏰11/10 18:00締切 撮影')
     expect(b.description).toContain('期限: 11/10 18:00')
   })
-  it('優先度 高 → 件名・色とも変えない / 選んだ色 / 完了 → ✅ 完了 と緑色', () => {
+  it('優先度 高 → 件名・色とも変えない / 選んだ色 / 完了 → ✔ とグレー', () => {
     expect(buildEvent(task({ title: 'A', priority: 'high' }), YUSA)).toMatchObject({ summary: 'A', colorId: null })
     expect(buildEvent(task({ title: 'A', color_id: '7' }), YUSA)).toMatchObject({ summary: 'A', colorId: '7' })
-    expect(buildEvent(task({ title: 'A', color_id: '7', status: 'done' }), YUSA)).toMatchObject({ summary: '✅ 完了 A', colorId: '10' })
+    expect(buildEvent(task({ title: 'A', color_id: '7', status: 'done' }), YUSA)).toMatchObject({ summary: '✔ A', colorId: '8' })
   })
   it('アプリで色を選んだだけでは、Google側の完了操作と誤認しない', async () => {
     const t = task({ title: '色', assignee_id: YUSA }); db.tasks.push(t)

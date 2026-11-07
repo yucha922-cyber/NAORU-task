@@ -13,6 +13,10 @@ import { addDays } from './dates'
 import { isAssignedTo, statusFor } from './responsibility'
 import type { CalendarLink, GoogleAccount, Task } from './types'
 
+/** 完了した予定の色（グラファイト＝グレー）。Google側でこの色か緑にすると完了扱い */
+export const DONE_COLOR = '8'
+export const DONE_MARK_COLORS = ['8', '10']
+
 export const SYNC_WINDOW_DAYS = 30 // これより古いタスクは新規には同期しない（API 呼び出し削減）
 export const MAX_AUTO_RETRY = 5
 export const MAX_OPS_PER_RUN = 200
@@ -101,7 +105,7 @@ const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`
  * - 作業時間あり : 作業日のその時間帯に予定（締切は説明欄と件名に併記）
  * - 締切時刻あり : 期限日の終日予定「⏰18:00締切」（時間帯をふさがない）
  * - 日付のみ     : 期限日の終日予定
- * - 完了         : 件名先頭に「✅ 完了」、緑色（バジル）
+ * - 完了         : 件名先頭に「✔」、グレー（グラファイト）
  * - 優先度      : Google側では印を付けない（アプリ内カレンダーで赤丸表示）
  * - 色           : タスクごとにアプリで選んだ色（未選択はカレンダーの標準色）
  * - 小項目       : 別の予定にはせず、親タスクの予定の説明欄に ☑/☐ で一覧表示
@@ -109,14 +113,14 @@ const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`
 export function buildEvent(t: Task, uid: string, children: Task[] = [], tz = 'Asia/Tokyo'): EventBody {
   const done = statusFor(t, uid) === 'done'
   const parts: string[] = []
-  if (done) parts.push('✅ 完了')
+  if (done) parts.push('✔')
   const hasWork = !!(t.work_date && t.work_start && t.work_end)
   if (t.due_date && t.due_time) parts.push(`⏰${hasWork && t.work_date !== t.due_date ? md(t.due_date) + ' ' : ''}${t.due_time}締切`)
   else if (hasWork && t.due_date && t.due_date !== t.work_date) parts.push(`⏰${md(t.due_date)}締切`)
   parts.push(t.title)
 
   const lines = ['NAORU TASK で管理しているタスクです。内容の変更はアプリで行ってください。',
-    '完了にするには: アプリでチェック、またはこの予定の色を「バジル（緑）」に変更／件名の先頭に「✅」か「完了」を付ける']
+    '完了にするには: アプリでチェック、またはこの予定の色を「グラファイト（グレー）」に変更／件名の先頭に「✔」か「完了」を付ける']
   if (t.due_date) lines.push(`期限: ${md(t.due_date)}${t.due_time ? ' ' + t.due_time : ''}`)
   if (hasWork) lines.push(`作業: ${md(t.work_date!)} ${t.work_start}〜${t.work_end}`)
   if (t.assignment_mode === 'everyone') lines.push('全員が各自実施するタスク')
@@ -130,7 +134,7 @@ export function buildEvent(t: Task, uid: string, children: Task[] = [], tz = 'As
   const base = {
     summary: parts.join(' '),
     description: lines.join('\n'),
-    colorId: done ? '10' : t.color_id ?? null,
+    colorId: done ? DONE_COLOR : t.color_id ?? null,
     status: 'confirmed' as const,
     extendedProperties: { private: { naoruTaskId: t.id } },
   }
@@ -146,7 +150,9 @@ export function buildEvent(t: Task, uid: string, children: Task[] = [], tz = 'As
   return { ...base, start: { date: day, dateTime: null, timeZone: null }, end: { date: addDays(day, 1), dateTime: null, timeZone: null }, transparency: 'transparent' }
 }
 
-export const hashEvent = (calendarId: string, b: EventBody) => JSON.stringify([calendarId, b])
+/** 予定の書式を変えたら上げる → 全予定が一度だけ送り直される */
+export const EVENT_FORMAT_VERSION = 2
+export const hashEvent = (calendarId: string, b: EventBody) => JSON.stringify([calendarId, b, EVENT_FORMAT_VERSION])
 
 /** 本人のカレンダーにあるべきタスクか（小項目は親の予定にまとめるので単独では同期しない） */
 export function shouldSync(t: Task, uid: string): boolean {
@@ -338,9 +344,9 @@ export async function runSync(opts: {
   }
 }
 
-/** Google側で人が行った完了操作か: 色を緑(バジル=10)にした / 件名の先頭に ✅・☑・✔・完了 を付けた */
+/** Google側で人が行った完了操作か: 色をグレー(グラファイト=8)か緑(バジル=10)にした / 件名の先頭に ✔・✅・☑・完了 を付けた */
 export function isDoneMarker(ev: Pick<RemoteEvent, 'summary' | 'colorId'>) {
-  return ev.colorId === '10' || /^\s*(✅|☑|✔|完了)/.test(ev.summary)
+  return DONE_MARK_COLORS.includes(ev.colorId ?? '') || /^\s*(✔|✅|☑|✓|完了)/.test(ev.summary)
 }
 
 /**
