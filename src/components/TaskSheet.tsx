@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { useApp } from '../lib/app'
-import { addDays, endOfWeek, todayStr } from '../lib/dates'
+import { addDays, endOfWeek, todayStr, weekday } from '../lib/dates'
+import { repo } from '../lib/client'
+import { notifyTemplatesChanged } from '../lib/recurrence'
 import { childrenOf } from '../lib/selectors'
-import { CATEGORY_LABEL, PRIORITY_LABEL, type Category, type Priority, type Task, type TaskInput } from '../lib/types'
+import { CATEGORY_LABEL, PRIORITY_LABEL, WEEKDAY_LABEL, type Category, type Frequency, type Priority, type Task, type TaskInput } from '../lib/types'
 import { ColorPicker, Sheet } from './ui'
 
 const EVERYONE = '__everyone'
@@ -15,6 +17,10 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
     ? { title: task.title, description: task.description, assignee_id: task.assignee_id, priority: task.priority, category: task.category, due_date: task.due_date, due_time: task.due_time, parent_id: task.parent_id, assignment_mode: task.assignment_mode, work_date: task.work_date, work_start: task.work_start, work_end: task.work_end, color_id: task.color_id ?? null }
     : { title: '', description: '', assignee_id: parent?.assignee_id ?? app.user!.id, priority: 'medium', category: 'general', due_date: defaultDate ?? todayStr(), due_time: null, parent_id: parentId ?? null, assignment_mode: 'single', work_date: null, work_start: null, work_end: null, color_id: parent?.color_id ?? null })
   const [subs, setSubs] = useState('')
+  // 繰り返し（新規の大項目のみ・院長/管理者）。設定すると繰り返しタスクとして登録する
+  const [repeat, setRepeat] = useState<'none' | Frequency>('none')
+  const [weekdays, setWeekdays] = useState<number[]>([])
+  const [intervalDays, setIntervalDays] = useState(3)
   const [phase, setPhase] = useState<'idle' | 'saving'>('idle')
   const [err, setErr] = useState<string | null>(null)
   // 不要な項目は折りたたむ（既に値がある場合だけ最初から開く）
@@ -22,6 +28,11 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
   const kids = task ? childrenOf(app.tasks, task.id) : []
   const isChild = !!(task?.parent_id ?? parentId)
   const busy = phase === 'saving'
+  const canRepeat = !task && !isChild && app.isManager
+  const repeating = canRepeat && repeat !== 'none'
+  const startDay = f.due_date || todayStr()
+  const repeatSummary = `${Number(startDay.slice(5, 7))}/${Number(startDay.slice(8, 10))}` + (
+    repeat === 'monthly' ? `（毎月${Number(startDay.slice(8, 10))}日）` : repeat === 'weekly' ? '' : repeat === 'interval' ? `（${intervalDays}日ごと）` : '')
   const set = <K extends keyof TaskInput>(k: K, v: TaskInput[K]) => setF((p) => ({ ...p, [k]: v }))
 
   const assignable = app.isManager ? app.members.filter((m) => m.active) : app.members.filter((m) => m.user_id === app.user!.id)
@@ -45,6 +56,10 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
     if (v) return setErr(v)
     setPhase('saving'); setErr(null)
     try {
+      if (repeating) {
+        await createRepeating()
+        return
+      }
       const work = f.work_start ? { work_date: f.work_date || f.due_date || today } : { work_date: null, work_start: null, work_end: null }
       const input = { ...f, ...work, title: f.title.trim(), due_date: f.due_date || null, due_time: f.due_time || null }
       if (task) await app.updateTask(task.id, input)
@@ -58,6 +73,24 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
       setErr(`保存できませんでした。通信状況を確認して、もう一度「保存」を押してください。（${(e as Error).message}）`)
       setPhase('idle')
     }
+  }
+
+  async function createRepeating() {
+    const start = f.due_date || today
+    await repo.saveTemplate(app.store!.id, {
+      title: f.title.trim(), description: f.description, assignee_id: f.assignment_mode === 'everyone' ? null : f.assignee_id,
+      priority: f.priority, category: f.category, frequency: repeat as Frequency,
+      interval_days: repeat === 'interval' ? intervalDays : null,
+      weekdays: repeat === 'weekly' ? (weekdays.length ? weekdays : [weekday(start)]) : [],
+      day_of_month: repeat === 'monthly' ? Number(start.slice(8, 10)) : null,
+      due_time: f.due_time || null, start_date: start, end_date: null, active: true,
+      assignment_mode: f.assignment_mode, color_id: f.color_id,
+    })
+    await repo.generateRecurring(app.store!.id)
+    notifyTemplatesChanged()
+    await app.reload()
+    app.setToast({ message: `繰り返しタスク「${f.title.trim()}」を登録しました`, tone: 'success' })
+    onClose()
   }
 
   async function createSubs(p: Task) {
@@ -122,6 +155,41 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
         {f.assignment_mode === 'everyone' && <p className="-mt-2 text-[11px] text-sky-700">スタッフ全員が各自で完了にします。各自のGoogleカレンダーにも入ります。</p>}
         {f.assignment_mode === 'single' && !f.assignee_id && <p className="-mt-2 text-[11px] text-amber-700">誰か1人が完了にすれば完了です（Googleカレンダーには入りません）。</p>}
 
+        {canRepeat && (
+          <div>
+            <label className="label">繰り返し</label>
+            <div className="grid grid-cols-5 gap-1.5">
+              {([['none', 'なし'], ['daily', '毎日'], ['weekly', '毎週'], ['interval', '◯日ごと'], ['monthly', '毎月']] as const).map(([v, l]) => (
+                <button key={v} type="button" onClick={() => setRepeat(v)}
+                  className={`h-10 rounded-xl border text-xs ${repeat === v ? 'border-ink bg-ink text-white' : 'border-neutral-200 bg-white'}`}>{l}</button>
+              ))}
+            </div>
+            {repeat === 'weekly' && (
+              <div className="mt-2 flex gap-1">
+                {WEEKDAY_LABEL.map((w, i) => {
+                  const on = weekdays.length ? weekdays.includes(i) : weekday(f.due_date || today) === i
+                  return (
+                    <button key={w} type="button" onClick={() => setWeekdays((cur) => { const base = cur.length ? cur : [weekday(f.due_date || today)]; return base.includes(i) ? base.filter((x) => x !== i) : [...base, i].sort() })}
+                      className={`h-10 flex-1 rounded-xl border text-sm ${on ? 'border-ink bg-ink text-white' : 'border-neutral-200'}`}>{w}</button>
+                  )
+                })}
+              </div>
+            )}
+            {repeat === 'interval' && (
+              <div className="mt-2 flex items-center gap-2 text-sm">
+                <input type="number" min={2} max={365} className="field w-24" value={intervalDays} onChange={(e) => setIntervalDays(Math.min(365, Math.max(1, Number(e.target.value) || 1)))} aria-label="間隔（日）" />
+                <span>日ごと</span>
+              </div>
+            )}
+            {repeating && (
+              <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
+                {repeatSummary}から繰り返します。各回のタスクは前日に自動で作られます（Googleカレンダーにもその時点で反映）。
+                作業時間・小項目は繰り返しでは使えません。変更・停止は「設定」→「繰り返しタスク」から。
+              </p>
+            )}
+          </div>
+        )}
+
         <button type="button" className="min-h-11 text-sm text-neutral-500" onClick={() => setDetails(!details)}>{details ? '▴ 詳細を閉じる' : '▾ 詳細（時刻・作業時間・色・種類・メモ）'}</button>
         {details && (
           <div className="space-y-4 rounded-2xl bg-neutral-50 p-3">
@@ -164,7 +232,7 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
           </div>
         )}
 
-        {!isChild && (
+        {!isChild && !repeating && (
           <div className="rounded-2xl bg-neutral-50 p-3">
             <div className="label">小項目{task ? `（${kids.filter((k) => k.status === 'done').length}/${kids.length} 完了）` : '（任意・進捗率を自動計算）'}</div>
             {kids.map((k) => (
@@ -182,7 +250,7 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
         {err && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{err}</p>}
         <div className="sticky bottom-0 -mx-1 flex gap-2 bg-white px-1 pt-1">
           {task && <button className="btn-danger" disabled={busy} onClick={remove}>削除</button>}
-          <button className="btn-primary flex-1" disabled={busy} onClick={submit}>{busy ? '保存中…' : task ? '保存' : '追加'}</button>
+          <button className="btn-primary flex-1" disabled={busy} onClick={submit}>{busy ? '保存中…' : task ? '保存' : repeating ? '繰り返しで追加' : '追加'}</button>
         </div>
       </div>
     </Sheet>

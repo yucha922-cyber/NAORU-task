@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { GoogleSyncPanel } from '../components/GoogleSyncPanel'
+import { notifyTemplatesChanged } from '../lib/recurrence'
 import { ColorPicker, Empty, Sheet } from '../components/ui'
 import { useApp } from '../lib/app'
 import { repo } from '../lib/client'
@@ -94,6 +95,7 @@ function TemplateSheet({ tpl, onClose }: { tpl?: TaskTemplate; onClose(): void }
       delete (input as Partial<TaskTemplate>).id; delete (input as Partial<TaskTemplate>).store_id; delete (input as Partial<TaskTemplate>).last_generated_date
       await repo.saveTemplate(app.store!.id, { ...input, title: f.title.trim(), due_time: f.due_time || null, end_date: f.end_date || null }, tpl?.id)
       await repo.generateRecurring(app.store!.id)
+      notifyTemplatesChanged()
       await app.reload()
       onClose()
     } catch (e) { setErr((e as Error).message) }
@@ -145,7 +147,7 @@ function TemplateSheet({ tpl, onClose }: { tpl?: TaskTemplate; onClose(): void }
         <div><label className="label">Googleカレンダーでの色</label><ColorPicker value={f.color_id ?? null} onChange={(v) => set('color_id', v)} /></div>
         {err && <p className="text-sm text-red-600">{err}</p>}
         <div className="flex gap-2">
-          {tpl && <button className="btn-danger" onClick={async () => { if (confirm('停止しますか？（生成済みのタスクは残ります）')) { await repo.deleteTemplate(tpl.id); onClose() } }}>停止</button>}
+          {tpl && <button className="btn-danger" onClick={async () => { if (confirm('停止しますか？（生成済みのタスクは残ります）')) { await repo.deleteTemplate(tpl.id); notifyTemplatesChanged(); onClose() } }}>停止</button>}
           <button className="btn-primary flex-1" onClick={save}>保存</button>
         </div>
       </div>
