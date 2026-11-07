@@ -167,6 +167,7 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
               </label>
             ))}
             <textarea className="field mt-2 h-20 py-2" placeholder={'1行に1つずつ入力\n例：企画完了\n動画撮影完了'} value={subs} onChange={(e) => setSubs(e.target.value)} />
+            <p className="mt-1 text-[11px] text-neutral-400">Googleカレンダーでは、親タスクの予定の説明欄に一覧（☑/☐）で表示されます</p>
             {task && <button className="btn-ghost mt-2 w-full" disabled={busy || !subs.trim()} onClick={addSubs}>小項目を追加</button>}
           </div>
         )}

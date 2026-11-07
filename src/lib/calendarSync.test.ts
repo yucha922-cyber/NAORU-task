@@ -231,6 +231,34 @@ describe('終日 ⇔ 時間指定の切り替え（実機で見つかった不�
   })
 })
 
+describe('小項目（親の予定にまとめる）', () => {
+  it('小項目は別の予定にならず、親の説明欄に ☑/☐ で表示。小項目の完了で親の予定が更新される', async () => {
+    const p = task({ title: '広告動画', assignee_id: YUSA })
+    const c1 = task({ title: '企画完了', parent_id: p.id, assignee_id: YUSA, created_at: '1' })
+    const c2 = task({ title: '撮影完了', parent_id: p.id, assignee_id: YUSA, created_at: '2' })
+    db.tasks.push(p, c1, c2)
+    await sync(YUSA)
+    expect(g.live(EMAIL[YUSA]).map((e) => e.summary)).toEqual(['広告動画'])
+    const desc = () => String([...g.calendars.values()][0].events.get(eventIdFor(p.id))!.body.description)
+    expect(desc()).toContain('小項目（0/2 完了）\n☐ 企画完了（11/6）\n☐ 撮影完了（11/6）')
+    c1.status = 'done'
+    const r = await sync(YUSA, { verifyCalendar: false })
+    expect(r.synced).toBe(1)
+    expect(desc()).toContain('小項目（1/2 完了）\n☑ 企画完了')
+  })
+  it('以前に別の予定として登録された小項目は自動で削除される', async () => {
+    const p = task({ title: '親', assignee_id: YUSA }); const c = task({ title: '子', parent_id: p.id, assignee_id: YUSA })
+    db.tasks.push(p, c)
+    login(YUSA)
+    await runSync({ uid: YUSA, storeId: 's1', api: googleCalendarApi, store: db.storeFor(YUSA), tasks: [p], today: TODAY, verifyCalendar: true })
+    await googleCalendarApi.upsertEvent(db.accounts.get(YUSA)!.calendar_id!, eventIdFor(c.id), buildEvent(c, YUSA)) // 旧バージョンで作られた子の予定
+    await db.storeFor(YUSA).saveLink({ task_id: c.id, user_id: YUSA, store_id: 's1', calendar_id: db.accounts.get(YUSA)!.calendar_id!, google_event_id: eventIdFor(c.id), sync_status: 'synced', synced_hash: 'old', last_error: null, retry_count: 0, synced_at: null })
+    expect(g.live(EMAIL[YUSA])).toHaveLength(2)
+    await sync(YUSA)
+    expect(g.live(EMAIL[YUSA]).map((e) => e.summary)).toEqual(['親'])
+  })
+})
+
 describe('全員向けタスク', () => {
   it('各自のカレンダーに入り、完了表示は本人の状態だけ', async () => {
     const t = task({ title: '日報提出', assignment_mode: 'everyone', assignees: [
