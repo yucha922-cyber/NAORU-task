@@ -447,8 +447,8 @@ describe('予定の表示形式', () => {
     expect(b.summary).toBe('⏰11/10 18:00締切 撮影')
     expect(b.description).toContain('期限: 11/10 18:00')
   })
-  it('優先度 高 → ‼（色は自動で付けない）/ 選んだ色 / 完了 → ✅ 完了 と緑色', () => {
-    expect(buildEvent(task({ title: 'A', priority: 'high' }), YUSA)).toMatchObject({ summary: '‼ A', colorId: null })
+  it('優先度 高 → 件名・色とも変えない / 選んだ色 / 完了 → ✅ 完了 と緑色', () => {
+    expect(buildEvent(task({ title: 'A', priority: 'high' }), YUSA)).toMatchObject({ summary: 'A', colorId: null })
     expect(buildEvent(task({ title: 'A', color_id: '7' }), YUSA)).toMatchObject({ summary: 'A', colorId: '7' })
     expect(buildEvent(task({ title: 'A', color_id: '7', status: 'done' }), YUSA)).toMatchObject({ summary: '✅ 完了 A', colorId: '10' })
   })

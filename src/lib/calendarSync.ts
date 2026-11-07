@@ -102,7 +102,7 @@ const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`
  * - 締切時刻あり : 期限日の終日予定「⏰18:00締切」（時間帯をふさがない）
  * - 日付のみ     : 期限日の終日予定
  * - 完了         : 件名先頭に「✅ 完了」、緑色（バジル）
- * - 優先度 高    : 件名先頭に「‼」
+ * - 優先度      : Google側では印を付けない（アプリ内カレンダーで赤丸表示）
  * - 色           : タスクごとにアプリで選んだ色（未選択はカレンダーの標準色）
  * - 小項目       : 別の予定にはせず、親タスクの予定の説明欄に ☑/☐ で一覧表示
  */
@@ -110,7 +110,6 @@ export function buildEvent(t: Task, uid: string, children: Task[] = [], tz = 'As
   const done = statusFor(t, uid) === 'done'
   const parts: string[] = []
   if (done) parts.push('✅ 完了')
-  else if (t.priority === 'high') parts.push('‼')
   const hasWork = !!(t.work_date && t.work_start && t.work_end)
   if (t.due_date && t.due_time) parts.push(`⏰${hasWork && t.work_date !== t.due_date ? md(t.due_date) + ' ' : ''}${t.due_time}締切`)
   else if (hasWork && t.due_date && t.due_date !== t.work_date) parts.push(`⏰${md(t.due_date)}締切`)
