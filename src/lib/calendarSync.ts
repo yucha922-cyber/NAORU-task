@@ -92,8 +92,9 @@ const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`
  * - 日付のみ     : 期限日の終日予定
  * - 完了         : 件名先頭に「✅ 完了」、緑色
  * - 優先度 高    : 件名先頭に「‼」、赤色
+ * - 小項目       : 別の予定にはせず、親タスクの予定の説明欄に ☑/☐ で一覧表示
  */
-export function buildEvent(t: Task, uid: string, tz = 'Asia/Tokyo'): EventBody {
+export function buildEvent(t: Task, uid: string, children: Task[] = [], tz = 'Asia/Tokyo'): EventBody {
   const done = statusFor(t, uid) === 'done'
   const parts: string[] = []
   if (done) parts.push('✅ 完了')
@@ -107,6 +108,12 @@ export function buildEvent(t: Task, uid: string, tz = 'Asia/Tokyo'): EventBody {
   if (t.due_date) lines.push(`期限: ${md(t.due_date)}${t.due_time ? ' ' + t.due_time : ''}`)
   if (hasWork) lines.push(`作業: ${md(t.work_date!)} ${t.work_start}〜${t.work_end}`)
   if (t.assignment_mode === 'everyone') lines.push('全員が各自実施するタスク')
+  const kids = children.filter((c) => !c.deleted_at)
+  if (kids.length) {
+    const doneCount = kids.filter((c) => c.status === 'done').length
+    lines.push('', `小項目（${doneCount}/${kids.length} 完了）`)
+    for (const c of kids) lines.push(`${c.status === 'done' ? '☑' : '☐'} ${c.title}${c.due_date ? `（${md(c.due_date)}）` : ''}`)
+  }
 
   const base = {
     summary: parts.join(' '),
@@ -129,10 +136,13 @@ export function buildEvent(t: Task, uid: string, tz = 'Asia/Tokyo'): EventBody {
 
 export const hashEvent = (calendarId: string, b: EventBody) => JSON.stringify([calendarId, b])
 
-/** 本人のカレンダーにあるべきタスクか */
+/** 本人のカレンダーにあるべきタスクか（小項目は親の予定にまとめるので単独では同期しない） */
 export function shouldSync(t: Task, uid: string): boolean {
-  return !t.deleted_at && isAssignedTo(t, uid) && !!(t.due_date || (t.work_date && t.work_start))
+  return !t.deleted_at && !t.parent_id && isAssignedTo(t, uid) && !!(t.due_date || (t.work_date && t.work_start))
 }
+
+const sortChildren = (a: Task, b: Task) =>
+  (a.due_date ?? '9999').localeCompare(b.due_date ?? '9999') || a.created_at.localeCompare(b.created_at)
 
 // ---------- 同期計画 ----------
 export type SyncOp =
@@ -151,6 +161,8 @@ export function planSync(opts: {
   const linkMap = new Map(links.map((l) => [l.task_id, l]))
   const taskMap = new Map(tasks.map((t) => [t.id, t]))
   const floor = addDays(today, -SYNC_WINDOW_DAYS)
+  const childrenOf = new Map<string, Task[]>()
+  for (const t of tasks) if (t.parent_id) childrenOf.set(t.parent_id, [...(childrenOf.get(t.parent_id) ?? []), t])
   const ops: SyncOp[] = []
   let waitingRetry = 0
 
@@ -159,7 +171,7 @@ export function planSync(opts: {
     const link = linkMap.get(t.id)
     const day = t.work_date && t.work_start ? t.work_date : t.due_date!
     if (!link && day < floor) continue // 古いタスクは新規作成しない
-    const body = buildEvent(t, uid)
+    const body = buildEvent(t, uid, (childrenOf.get(t.id) ?? []).sort(sortChildren))
     const hash = hashEvent(calendarId ?? '', body)
     const upToDate = link && link.calendar_id === calendarId && link.sync_status === 'synced' && link.synced_hash === hash
     if (upToDate) continue
