@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { GoogleSyncPanel } from '../components/GoogleSyncPanel'
-import { Empty, Sheet } from '../components/ui'
+import { ColorPicker, Empty, Sheet } from '../components/ui'
 import { useApp } from '../lib/app'
 import { repo } from '../lib/client'
 import { todayStr } from '../lib/dates'
@@ -82,7 +82,7 @@ function TemplateSheet({ tpl, onClose }: { tpl?: TaskTemplate; onClose(): void }
   const app = useApp()
   const [f, setF] = useState<TemplateInput>(() => tpl ? { ...tpl } : {
     title: '', description: '', assignee_id: null, priority: 'medium', category: 'general', frequency: 'daily',
-    interval_days: 3, weekdays: [1], day_of_month: 1, due_time: null, start_date: todayStr(), end_date: null, active: true, assignment_mode: 'single',
+    interval_days: 3, weekdays: [1], day_of_month: 1, due_time: null, start_date: todayStr(), end_date: null, active: true, assignment_mode: 'single', color_id: null,
   })
   const [err, setErr] = useState<string | null>(null)
   const set = <K extends keyof TemplateInput>(k: K, v: TemplateInput[K]) => setF((p) => ({ ...p, [k]: v }))
@@ -142,6 +142,7 @@ function TemplateSheet({ tpl, onClose }: { tpl?: TaskTemplate; onClose(): void }
           <select className="field" value={f.priority} onChange={(e) => set('priority', e.target.value as TemplateInput['priority'])}>
             {Object.entries(PRIORITY_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select></div>
+        <div><label className="label">Googleカレンダーでの色</label><ColorPicker value={f.color_id ?? null} onChange={(v) => set('color_id', v)} /></div>
         {err && <p className="text-sm text-red-600">{err}</p>}
         <div className="flex gap-2">
           {tpl && <button className="btn-danger" onClick={async () => { if (confirm('停止しますか？（生成済みのタスクは残ります）')) { await repo.deleteTemplate(tpl.id); onClose() } }}>停止</button>}

@@ -3,7 +3,7 @@ import { useApp } from '../lib/app'
 import { dueState, labelDate } from '../lib/dates'
 import { childrenOf, progress } from '../lib/selectors'
 import { everyoneProgress, isAssignedTo, statusFor } from '../lib/responsibility'
-import { CATEGORY_LABEL, type Task } from '../lib/types'
+import { CATEGORY_LABEL, colorHex, type Task } from '../lib/types'
 import { Bar } from './ui'
 import { TaskSheet } from './TaskSheet'
 
@@ -50,7 +50,10 @@ export function TaskItem({ task, showAssignee = true, compact = false }: { task:
       <div className="flex items-start gap-3 px-3 py-3" onClick={() => setOpen(true)}>
         <CheckButton task={task} />
         <div className="min-w-0 flex-1">
-          <div className={`text-[15px] leading-snug ${myStatus === 'done' ? 'text-neutral-400 line-through' : ''}`}>{task.title}</div>
+          <div className={`flex items-center gap-1.5 text-[15px] leading-snug ${myStatus === 'done' ? 'text-neutral-400 line-through' : ''}`}>
+            {colorHex(task.color_id) && <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: colorHex(task.color_id)! }} title="Googleカレンダーでの色" />}
+            <span>{task.title}</span>
+          </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
             <span className={`font-medium ${tone[st]}`}>
               {st === 'overdue' && '期限超過・'}{labelDate(task.due_date)}{task.due_time && ` ${task.due_time}`}

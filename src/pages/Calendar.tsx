@@ -56,16 +56,27 @@ export function CalendarPage() {
             const ts = byDay.get(d) ?? []
             const open = ts.filter((t) => statusFor(t, user!.id) === 'open')
             const st = (t: (typeof ts)[number]) => dueState({ status: 'open', due_date: t.due_date })
+            // 重要度「高」の未完了タスクがある日は日付を赤丸で囲む（点は期限の状態を表すため別の印にする）
+            const important = open.some((t) => t.priority === 'high')
             const dot = open.some((t) => st(t) === 'overdue') ? 'bg-red-500' : open.some((t) => st(t) === 'soon') ? 'bg-orange-400' : open.length ? 'bg-ink' : ts.length ? 'bg-emerald-500' : ''
             return (
               <button key={d} onClick={() => setSel(d)}
-                className={`flex h-12 flex-col items-center justify-center rounded-xl text-sm ${d === sel ? 'bg-ink text-white' : d === today ? 'bg-neutral-100 font-semibold' : ''}`}>
-                {Number(d.slice(8))}
-                <span className={`mt-1 h-1.5 w-1.5 rounded-full ${dot}`} />
+                className={`flex h-14 flex-col items-center justify-center rounded-xl text-sm ${d === sel ? 'bg-ink text-white' : d === today ? 'bg-neutral-100 font-semibold' : ''}`}>
+                <span className={`flex h-7 w-7 items-center justify-center rounded-full ${important ? 'border-2 border-red-500' : ''}`}
+                  aria-label={important ? `${Number(d.slice(8))}日（重要なタスクあり）` : undefined}>{Number(d.slice(8))}</span>
+                <span className={`mt-0.5 h-1.5 w-1.5 rounded-full ${dot}`} />
               </button>
             )
           })}
         </div>
+      </div>
+
+      <div className="-mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-neutral-500">
+        <span className="flex items-center gap-1"><span className="inline-block h-3.5 w-3.5 rounded-full border-2 border-red-500" />重要度 高</span>
+        <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-red-500" />期限超過</span>
+        <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-orange-400" />期限間近</span>
+        <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-ink" />未完了</span>
+        <span className="flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />完了</span>
       </div>
 
       <section>

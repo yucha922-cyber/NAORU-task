@@ -101,8 +101,9 @@ const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`
  * - 作業時間あり : 作業日のその時間帯に予定（締切は説明欄と件名に併記）
  * - 締切時刻あり : 期限日の終日予定「⏰18:00締切」（時間帯をふさがない）
  * - 日付のみ     : 期限日の終日予定
- * - 完了         : 件名先頭に「✅ 完了」、緑色
- * - 優先度 高    : 件名先頭に「‼」、赤色
+ * - 完了         : 件名先頭に「✅ 完了」、緑色（バジル）
+ * - 優先度 高    : 件名先頭に「‼」
+ * - 色           : タスクごとにアプリで選んだ色（未選択はカレンダーの標準色）
  * - 小項目       : 別の予定にはせず、親タスクの予定の説明欄に ☑/☐ で一覧表示
  */
 export function buildEvent(t: Task, uid: string, children: Task[] = [], tz = 'Asia/Tokyo'): EventBody {
@@ -130,7 +131,7 @@ export function buildEvent(t: Task, uid: string, children: Task[] = [], tz = 'As
   const base = {
     summary: parts.join(' '),
     description: lines.join('\n'),
-    colorId: done ? '10' : t.priority === 'high' ? '11' : null,
+    colorId: done ? '10' : t.color_id ?? null,
     status: 'confirmed' as const,
     extendedProperties: { private: { naoruTaskId: t.id } },
   }

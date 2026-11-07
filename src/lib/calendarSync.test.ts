@@ -131,7 +131,7 @@ const task = (p: Partial<Task>): Task => ({
   id: `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}`, store_id: 's1', parent_id: null, title: 'タスク', description: '',
   assignee_id: null, priority: 'medium', category: 'general', due_date: TODAY, due_time: null, status: 'open', completed_at: null,
   completed_by: null, template_id: null, occurrence_date: null, created_by: BOSS, created_at: '', updated_at: '', deleted_at: null,
-  assignment_mode: 'single', work_date: null, work_start: null, work_end: null, assignees: [], ...p,
+  assignment_mode: 'single', color_id: null, work_date: null, work_start: null, work_end: null, assignees: [], ...p,
 })
 
 let g: FakeGoogle
@@ -447,9 +447,19 @@ describe('予定の表示形式', () => {
     expect(b.summary).toBe('⏰11/10 18:00締切 撮影')
     expect(b.description).toContain('期限: 11/10 18:00')
   })
-  it('優先度 高 → ‼ と赤色 / 完了 → ✅ 完了 と緑色', () => {
-    expect(buildEvent(task({ title: 'A', priority: 'high' }), YUSA)).toMatchObject({ summary: '‼ A', colorId: '11' })
-    expect(buildEvent(task({ title: 'A', priority: 'high', status: 'done' }), YUSA)).toMatchObject({ summary: '✅ 完了 A', colorId: '10' })
+  it('優先度 高 → ‼（色は自動で付けない）/ 選んだ色 / 完了 → ✅ 完了 と緑色', () => {
+    expect(buildEvent(task({ title: 'A', priority: 'high' }), YUSA)).toMatchObject({ summary: '‼ A', colorId: null })
+    expect(buildEvent(task({ title: 'A', color_id: '7' }), YUSA)).toMatchObject({ summary: 'A', colorId: '7' })
+    expect(buildEvent(task({ title: 'A', color_id: '7', status: 'done' }), YUSA)).toMatchObject({ summary: '✅ 完了 A', colorId: '10' })
+  })
+  it('アプリで色を選んだだけでは、Google側の完了操作と誤認しない', async () => {
+    const t = task({ title: '色', assignee_id: YUSA }); db.tasks.push(t)
+    await sync(YUSA)
+    t.color_id = '11'
+    await sync(YUSA, { verifyCalendar: false })
+    const r = await sync(YUSA, { verifyCalendar: false })
+    expect(r.completedFromGoogle).toBe(0)
+    expect(g.live(EMAIL[YUSA])[0].summary).toBe('色')
   })
   it('予定IDは Google の形式（a-v, 0-9）', () => {
     expect(eventIdFor('0f8e2a4c-1b3d-4e5f-9a7b-c6d8e0f1a2b3')).toMatch(/^[a-v0-9]{5,1024}$/)
