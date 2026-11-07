@@ -52,6 +52,15 @@ export interface CalendarApi {
   /** 予定を削除（既に無い場合も成功扱い） */
   deleteEvent(calendarId: string, eventId: string): Promise<void>
   deleteCalendar(calendarId: string): Promise<void>
+  /** 専用カレンダー内で updatedMin 以降に更新された予定（Google側での完了操作の検出用） */
+  listChangedEvents(calendarId: string, updatedMin: string | null, timeMin: string): Promise<RemoteEvent[]>
+}
+
+export interface RemoteEvent {
+  id: string
+  summary: string
+  colorId: string | null
+  taskId: string | null
 }
 
 export interface SyncStore {
@@ -65,6 +74,8 @@ export interface SyncStore {
   deleteLink(taskId: string): Promise<void>
   /** 削除済みも含めて ID でタスクを取得（読み込み範囲外・他店舗のリンク解決用） */
   fetchTasks(ids: string[]): Promise<Task[]>
+  /** 本人として完了にする（全員向けタスクは本人の分） */
+  completeTask(task: Task): Promise<Task>
 }
 
 // ---------- 予定の内容 ----------
@@ -104,7 +115,8 @@ export function buildEvent(t: Task, uid: string, children: Task[] = [], tz = 'As
   else if (hasWork && t.due_date && t.due_date !== t.work_date) parts.push(`⏰${md(t.due_date)}締切`)
   parts.push(t.title)
 
-  const lines = ['NAORU TASK で管理しているタスクです。変更・完了はアプリで行ってください。']
+  const lines = ['NAORU TASK で管理しているタスクです。内容の変更はアプリで行ってください。',
+    '完了にするには: アプリでチェック、またはこの予定の色を「バジル（緑）」に変更／件名の先頭に「✅」か「完了」を付ける']
   if (t.due_date) lines.push(`期限: ${md(t.due_date)}${t.due_time ? ' ' + t.due_time : ''}`)
   if (hasWork) lines.push(`作業: ${md(t.work_date!)} ${t.work_start}〜${t.work_end}`)
   if (t.assignment_mode === 'everyone') lines.push('全員が各自実施するタスク')
@@ -192,6 +204,8 @@ export interface SyncResult {
   deleted: number
   failed: number
   waitingRetry: number
+  /** Googleカレンダー側の操作で完了にしたタスク数 */
+  completedFromGoogle: number
   stopped: GoogleErrorKind | null
   message: string | null
 }
@@ -223,7 +237,7 @@ export async function runSync(opts: {
   onProgress?: (done: number, total: number) => void
 }): Promise<SyncResult> {
   const { uid, api, store } = opts
-  const res: SyncResult = { synced: 0, deleted: 0, failed: 0, waitingRetry: 0, stopped: null, message: null }
+  const res: SyncResult = { synced: 0, deleted: 0, failed: 0, waitingRetry: 0, completedFromGoogle: 0, stopped: null, message: null }
   const account = await store.getAccount()
   if (!account || account.status === 'disconnected') return { ...res, message: 'Googleカレンダーが未連携です。' }
 
@@ -239,7 +253,24 @@ export async function runSync(opts: {
   const known = new Set(opts.tasks.map((t) => t.id))
   const missing = links.filter((l) => !known.has(l.task_id)).map((l) => l.task_id)
   const extra = missing.length ? await store.fetchTasks(missing) : []
-  const all = [...opts.tasks, ...extra]
+  let all = [...opts.tasks, ...extra]
+
+  // Google側で「完了」にされた予定を検出してアプリでも完了にする（NAORU TASK の予定のみ）
+  if (account.last_sync_at) {
+    try {
+      const done = await detectGoogleCompletions(api, calendarId, account.last_sync_at, opts.today, links, all, uid)
+      for (const t of done) {
+        try {
+          const updated = await store.completeTask(t)
+          all = all.map((x) => (x.id === updated.id ? updated : x))
+          res.completedFromGoogle++
+        } catch { /* 権限なし等は無視（アプリ側の状態を優先） */ }
+      }
+    } catch (e) {
+      if (isFatal(e)) return finish(e)
+      // 読み取りに失敗しても、アプリ→Googleの反映は続行
+    }
+  }
   const fetched = new Set(all.map((t) => t.id))
   const { ops, waitingRetry } = planSync({ uid, calendarId, tasks: all, links, today: opts.today, force: opts.force })
   // DB からも消えたタスク（物理削除）の予定も削除対象
@@ -305,6 +336,38 @@ export async function runSync(opts: {
     }).catch(() => {})
     return res
   }
+}
+
+/** Google側で人が行った完了操作か: 色を緑(バジル=10)にした / 件名の先頭に ✅・☑・✔・完了 を付けた */
+export function isDoneMarker(ev: Pick<RemoteEvent, 'summary' | 'colorId'>) {
+  return ev.colorId === '10' || /^\s*(✅|☑|✔|完了)/.test(ev.summary)
+}
+
+/**
+ * 完了にすべきタスクを特定。アプリ自身が最後に書き込んだ内容（synced_hash）と比べて
+ * 件名か色が「人の手で」変わっていて、かつ完了の目印がある場合だけ対象にする。
+ * （アプリで完了→元に戻した直後に、Google上に残っている古い ✅ を誤って拾わないため）
+ */
+export async function detectGoogleCompletions(api: CalendarApi, calendarId: string, lastSyncAt: string, today: string,
+  links: CalendarLink[], tasks: Task[], uid: string): Promise<Task[]> {
+  const since = new Date(new Date(lastSyncAt).getTime() - 5 * 60_000).toISOString() // 時計のずれを考慮
+  const timeMin = `${addDays(today, -SYNC_WINDOW_DAYS)}T00:00:00+09:00`
+  const events = await api.listChangedEvents(calendarId, since, timeMin)
+  const linkMap = new Map(links.map((l) => [l.task_id, l]))
+  const taskMap = new Map(tasks.map((t) => [t.id, t]))
+  const out: Task[] = []
+  for (const ev of events) {
+    if (!ev.taskId) continue
+    const link = linkMap.get(ev.taskId)
+    const t = taskMap.get(ev.taskId)
+    if (!link?.synced_hash || link.calendar_id !== calendarId || !t || t.deleted_at) continue
+    if (!isAssignedTo(t, uid) || statusFor(t, uid) === 'done') continue
+    let written: EventBody
+    try { written = JSON.parse(link.synced_hash)[1] as EventBody } catch { continue }
+    const changedByUser = ev.summary !== written.summary || (ev.colorId ?? null) !== (written.colorId ?? null)
+    if (changedByUser && isDoneMarker(ev)) out.push(t)
+  }
+  return out
 }
 
 function kindToStatus(e: unknown): CalendarLink['sync_status'] {

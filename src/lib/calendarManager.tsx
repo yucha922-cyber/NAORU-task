@@ -22,6 +22,7 @@ const syncStore: SyncStore = {
   saveLink: (l) => repo.saveCalendarLink(l),
   deleteLink: (id) => repo.deleteCalendarLink(id),
   fetchTasks: (ids) => repo.getTasksByIds(ids),
+  completeTask: (t) => (t.assignment_mode === 'everyone' ? repo.setMyDone(t.id, true) : repo.setDone(t.id, true)),
 }
 
 interface CalendarSyncState {
@@ -92,6 +93,10 @@ export function CalendarSyncProvider({ children }: { children: ReactNode }) {
       })
       verified.current = true
       setLastResult(r)
+      if (r.completedFromGoogle > 0) {
+        app.setToast({ message: `Googleカレンダーで完了にしたタスク${r.completedFromGoogle}件を、アプリでも完了にしました`, tone: 'success' })
+        void app.reload()
+      }
       setError(r.stopped ? r.message : null)
       if (r.stopped === 'auth') { gcal.clearToken(); setConnected(false) }
     } catch (e) {
@@ -102,7 +107,7 @@ export function CalendarSyncProvider({ children }: { children: ReactNode }) {
       await refresh()
       if (rerun.current) { rerun.current = false; void sync() }
     }
-  }, [uid, app.store, refresh])
+  }, [uid, app, refresh])
 
   // タスクの追加・編集・完了・再取得のたびに（接続中なら）自動反映。3秒まとめて送信
   const syncRef = useRef(sync)

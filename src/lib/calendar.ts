@@ -5,7 +5,7 @@
  * - openid email: 連携した Google アカウントを確認し、別アカウントへの誤同期を防ぐためだけに使用。
  * - アクセストークンはメモリ上のみ（localStorage・DB・GitHub に保存しない）。ページを閉じると消える。
  */
-import { GoogleError, type CalendarApi, type EventBody } from './calendarSync'
+import { GoogleError, type CalendarApi, type EventBody, type RemoteEvent } from './calendarSync'
 
 export const GOOGLE_CLIENT_ID = ((import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined) ?? '').trim()
 export const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.app.created'
@@ -166,6 +166,28 @@ export const googleCalendarApi: CalendarApi = {
       if (e instanceof GoogleError && (e.kind === 'not_found' || e.kind === 'calendar_missing')) return
       throw e
     }
+  },
+  async listChangedEvents(calendarId, updatedMin, timeMin) {
+    const out: RemoteEvent[] = []
+    let pageToken = ''
+    let since = updatedMin
+    for (let page = 0; page < 10; page++) {
+      const q = new URLSearchParams({ maxResults: '250', showDeleted: 'false', timeMin, fields: 'items(id,summary,colorId,extendedProperties),nextPageToken' })
+      if (since) q.set('updatedMin', since)
+      if (pageToken) q.set('pageToken', pageToken)
+      let r: { items?: { id: string; summary?: string; colorId?: string; extendedProperties?: { private?: { naoruTaskId?: string } } }[]; nextPageToken?: string }
+      try {
+        r = await call('GET', `${cal(calendarId)}/events?${q}`, undefined, true)
+      } catch (e) {
+        // updatedMin が古すぎる場合（410）は条件なしで取り直す
+        if (e instanceof GoogleError && e.status === 410 && since) { since = null; page--; continue }
+        throw e
+      }
+      for (const it of r.items ?? []) out.push({ id: it.id, summary: it.summary ?? '', colorId: it.colorId ?? null, taskId: it.extendedProperties?.private?.naoruTaskId ?? null })
+      if (!r.nextPageToken) break
+      pageToken = r.nextPageToken
+    }
+    return out
   },
   async deleteCalendar(id) {
     try { await call('DELETE', cal(id), undefined, true) } catch (e) {
