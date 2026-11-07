@@ -50,7 +50,7 @@ export function Bar({ pct, tone = 'ink' }: { pct: number; tone?: 'ink' | 'green'
   )
 }
 
-/** Googleカレンダーの予定の色を選ぶ（バジル＝緑は「完了」の目印のため選べない） */
+/** Googleカレンダーの予定の色を選ぶ（グレー・緑は「完了」の目印のため選べない） */
 export function ColorPicker({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) {
   return (
     <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="カレンダーの色">

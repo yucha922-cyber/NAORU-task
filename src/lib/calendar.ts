@@ -148,14 +148,16 @@ export const googleCalendarApi: CalendarApi = {
   async upsertEvent(calendarId, eventId, body: EventBody) {
     await sleep(requestDelay) // 1ユーザーあたりの毎分上限への配慮
     try {
-      await call('PATCH', `${cal(calendarId)}/events/${eventId}`, body)
+      // 予定はアプリ専用カレンダーのものだけなので、毎回まるごと置き換える（PUT）。
+      // 送らない項目（色・終日/時刻の不要な側）は自動で消えるため、null を送る必要がない
+      await call('PUT', `${cal(calendarId)}/events/${eventId}`, { ...withoutNulls(body), id: eventId })
     } catch (e) {
       if (!(e instanceof GoogleError && e.kind === 'not_found')) throw e
       try {
         await call('POST', `${cal(calendarId)}/events`, { ...withoutNulls(body), id: eventId }, true)
       } catch (e2) {
         // 他の端末が同時に作成した → 内容を上書き
-        if (e2 instanceof GoogleError && e2.kind === 'conflict') await call('PATCH', `${cal(calendarId)}/events/${eventId}`, body)
+        if (e2 instanceof GoogleError && e2.kind === 'conflict') await call('PUT', `${cal(calendarId)}/events/${eventId}`, { ...withoutNulls(body), id: eventId })
         else throw e2
       }
     }

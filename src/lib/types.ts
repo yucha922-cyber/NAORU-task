@@ -146,7 +146,7 @@ export const CATEGORY_LABEL: Record<Category, string> = {
   blog: 'HPBブログ',
   report: '月次報告',
 }
-/** Googleカレンダーの予定の色（バジル=10 は「完了」の目印のため除外） */
+/** Googleカレンダーの予定の色（グラファイト=8・バジル=10 は「完了」の目印のため除外） */
 export const EVENT_COLORS: { id: string; name: string; hex: string }[] = [
   { id: '11', name: 'トマト', hex: '#d50000' },
   { id: '4', name: 'フラミンゴ', hex: '#e67c73' },
@@ -157,7 +157,6 @@ export const EVENT_COLORS: { id: string; name: string; hex: string }[] = [
   { id: '9', name: 'ブルーベリー', hex: '#3f51b5' },
   { id: '1', name: 'ラベンダー', hex: '#7986cb' },
   { id: '3', name: 'ブドウ', hex: '#8e24aa' },
-  { id: '8', name: 'グラファイト', hex: '#616161' },
 ]
 export const colorHex = (id: string | null) => EVENT_COLORS.find((c) => c.id === id)?.hex ?? null
 
