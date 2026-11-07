@@ -77,6 +77,13 @@ export function GoogleSyncPanel() {
         {g.failedLinks.length > 0 && !g.error && (
           <p className="rounded-xl bg-orange-50 p-3 text-xs leading-relaxed text-orange-700">反映できていないタスクが {g.failedLinks.length} 件あります。「今すぐ同期」で再試行します。<br />{g.failedLinks[0].last_error}</p>
         )}
+        {g.linked && (
+          <div className="rounded-xl bg-neutral-50 p-3 text-[11px] leading-relaxed text-neutral-600">
+            <b>Googleカレンダーで完了にする方法</b><br />
+            予定を開いて ✏️編集 →「色」を<b>バジル（緑）</b>にする、または件名の先頭に<b>「✅」か「完了」</b>を付けて保存。<br />
+            次にこのアプリを開いて同期したときに、アプリでも完了になります。
+          </div>
+        )}
         <p className="text-[11px] leading-relaxed text-neutral-400">
           ※ Googleの安全上の仕組みにより、接続は約1時間で切れます。アプリを閉じている間は反映されません。アプリを開いて「反映する」を押すと、その間の変更（院長による変更・削除も含む）がまとめて反映されます。
         </p>

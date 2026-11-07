@@ -5,7 +5,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { __test, googleCalendarApi } from './calendar'
-import { buildEvent, countPending, eventIdFor, MAX_AUTO_RETRY, runSync, type SyncStore } from './calendarSync'
+import { buildEvent, countPending, eventIdFor, isDoneMarker, MAX_AUTO_RETRY, runSync, type SyncStore } from './calendarSync'
 import type { CalendarLink, GoogleAccount, Task } from './types'
 
 const TODAY = '2026-11-06'
@@ -57,6 +57,10 @@ class FakeGoogle {
       if (m === 'GET') return res(200, { id: parts[1] })
       if (m === 'DELETE') { this.calendars.delete(parts[1]); return res(204) }
     }
+    if (parts.length === 3 && m === 'GET') {
+      const items = [...c.events.entries()].filter(([, e]) => e.status === 'confirmed').map(([id, e]) => ({ id, summary: e.body.summary, colorId: e.body.colorId ?? undefined, extendedProperties: e.body.extendedProperties }))
+      return res(200, { items })
+    }
     if (parts.length === 3 && m === 'POST') {
       if (c.events.has(body.id)) return res(409, { error: { code: 409, message: 'The requested identifier already exists.' } })
       c.events.set(body.id, { body, status: 'confirmed' })
@@ -106,6 +110,15 @@ class FakeDb {
       },
       deleteLink: async (id) => { this.links = this.links.filter((x) => !(x.task_id === id && x.user_id === uid)) },
       fetchTasks: async (ids) => this.tasks.filter((t) => ids.includes(t.id)),
+      completeTask: async (t) => {
+        const cur = this.tasks.find((x) => x.id === t.id)!
+        if (cur.assignment_mode === 'everyone') {
+          cur.assignees = cur.assignees.map((a) => (a.user_id === uid ? { ...a, status: 'done', completed_at: 'x' } : a))
+          if (cur.assignees.every((a) => a.status === 'done')) cur.status = 'done'
+        } else if (cur.assignee_id === uid) cur.status = 'done'
+        else throw new Error('RLS')
+        return cur
+      },
     }
   }
   link(uid: string) {
@@ -157,12 +170,12 @@ describe('スタッフごとのカレンダーへの同期', () => {
     expect(evs[0].id).toBe(eventIdFor(t.id))
   })
 
-  it('変更がなければ Google API を呼ばない（無料枠の節約）', async () => {
-    db.tasks.push(task({ assignee_id: YUSA }))
+  it('変更がなければ書き込みはせず、Google側の完了確認の読み取り1回だけ（無料枠の節約）', async () => {
+    db.tasks.push(task({ assignee_id: YUSA }), task({ assignee_id: YUSA }))
     await sync(YUSA)
     const before = g.calls
     await sync(YUSA, { verifyCalendar: false })
-    expect(g.calls).toBe(before)
+    expect(g.calls - before).toBe(1)
   })
 
   it('院長がタスクを削除 → Yusaの次回同期で予定が削除される', async () => {
@@ -259,6 +272,63 @@ describe('小項目（親の予定にまとめる）', () => {
   })
 })
 
+describe('Google側での完了操作 → アプリも完了', () => {
+  /** Googleカレンダーアプリで人が予定を編集したことにする */
+  const editInGoogle = (taskId: string, patch: Record<string, unknown>) => {
+    for (const c of g.calendars.values()) { const e = c.events.get(eventIdFor(taskId)); if (e) Object.assign(e.body, patch) }
+  }
+  it('色を緑（バジル）にする → アプリで完了、予定は「✅ 完了」表示に', async () => {
+    const t = task({ title: 'テスト3', assignee_id: YUSA }); db.tasks.push(t)
+    await sync(YUSA)
+    editInGoogle(t.id, { colorId: '10' })
+    const r = await sync(YUSA, { verifyCalendar: false })
+    expect(r.completedFromGoogle).toBe(1)
+    expect(t.status).toBe('done')
+    expect(g.live(EMAIL[YUSA])[0].summary).toBe('✅ 完了 テスト3')
+  })
+  it('件名の先頭に「✅」や「完了」を付ける → アプリで完了', async () => {
+    const a = task({ title: 'A', assignee_id: YUSA }), b = task({ title: 'B', assignee_id: YUSA }); db.tasks.push(a, b)
+    await sync(YUSA)
+    editInGoogle(a.id, { summary: '✅A' }); editInGoogle(b.id, { summary: '完了 B' })
+    const r = await sync(YUSA, { verifyCalendar: false })
+    expect(r.completedFromGoogle).toBe(2)
+  })
+  it('アプリで完了→元に戻した場合、Googleに残る古い ✅ で再び完了にしない', async () => {
+    const t = task({ title: 'C', assignee_id: YUSA }); db.tasks.push(t)
+    await sync(YUSA)
+    t.status = 'done'; await sync(YUSA, { verifyCalendar: false }) // アプリが ✅ を書き込む
+    t.status = 'open' // アプリで元に戻す（Googleにはまだ ✅ が残っている）
+    const r = await sync(YUSA, { verifyCalendar: false })
+    expect(r.completedFromGoogle).toBe(0)
+    expect(t.status).toBe('open')
+    expect(g.live(EMAIL[YUSA])[0].summary).toBe('C')
+  })
+  it('完了の目印がない編集（件名変更・色を赤など）では完了にしない', async () => {
+    const t = task({ title: 'D', assignee_id: YUSA }); db.tasks.push(t)
+    await sync(YUSA)
+    editInGoogle(t.id, { summary: 'D（メモ）', colorId: '11' })
+    const r = await sync(YUSA, { verifyCalendar: false })
+    expect(r.completedFromGoogle).toBe(0)
+    expect(t.status).toBe('open')
+  })
+  it('全員向けタスクは本人の分だけ完了になる', async () => {
+    const t = task({ title: '日報', assignment_mode: 'everyone', assignees: [
+      { user_id: YUSA, status: 'open', completed_at: null }, { user_id: SHOKO, status: 'open', completed_at: null }] })
+    db.tasks.push(t)
+    await sync(YUSA)
+    editInGoogle(t.id, { colorId: '10' })
+    await sync(YUSA, { verifyCalendar: false })
+    expect(t.assignees.find((a) => a.user_id === YUSA)!.status).toBe('done')
+    expect(t.assignees.find((a) => a.user_id === SHOKO)!.status).toBe('open')
+    expect(t.status).toBe('open')
+  })
+  it('判定ロジック: 完了の目印', () => {
+    expect(isDoneMarker({ summary: 'x', colorId: '10' })).toBe(true)
+    expect(isDoneMarker({ summary: ' 完了 x', colorId: null })).toBe(true)
+    expect(isDoneMarker({ summary: 'x 完了', colorId: null })).toBe(false)
+  })
+})
+
 describe('全員向けタスク', () => {
   it('各自のカレンダーに入り、完了表示は本人の状態だけ', async () => {
     const t = task({ title: '日報提出', assignment_mode: 'everyone', assignees: [
@@ -311,7 +381,7 @@ describe('エラー・期限切れ', () => {
     const r = await sync(YUSA, { verifyCalendar: false })
     expect(r.stopped).toBe('rate_limit')
     expect(JSON.stringify(db.tasks)).toBe(snapshot)
-    expect(db.links[0].sync_status).toBe('error')
+    expect(r.message).toContain('利用制限')
     g.failNext = null
     await sync(YUSA)
     expect(g.live(EMAIL[YUSA])[0].summary).toBe('変更')
@@ -321,10 +391,11 @@ describe('エラー・期限切れ', () => {
     db.tasks.push(task({ assignee_id: YUSA }))
     await sync(YUSA) // カレンダー作成のみ成功させるため一旦同期
     db.tasks.push(task({ title: '失敗するタスク', assignee_id: YUSA }))
-    for (let i = 0; i < MAX_AUTO_RETRY; i++) { g.failNext = { status: 500, count: 1 }; await sync(YUSA, { verifyCalendar: false }) }
+    // 1回目は完了確認の読み取り（失敗しても続行）、2回目が予定の書き込み
+    for (let i = 0; i < MAX_AUTO_RETRY; i++) { g.failNext = { status: 500, count: 2 }; await sync(YUSA, { verifyCalendar: false }) }
     const before = g.calls
     await sync(YUSA, { verifyCalendar: false })
-    expect(g.calls).toBe(before) // 自動では呼ばない
+    expect(g.calls - before).toBe(1) // 読み取りのみ。失敗タスクの書き込みは自動では行わない
     const r = await sync(YUSA, { verifyCalendar: false, force: true })
     expect(r.synced).toBe(1)
   })
