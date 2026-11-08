@@ -5,7 +5,10 @@ import { TaskSheet } from '../components/TaskSheet'
 import { Empty, Sheet } from '../components/ui'
 import { useApp } from '../lib/app'
 import { useCalendarSync } from '../lib/calendarManager'
-import { showInMine, statusFor } from '../lib/responsibility'
+import { isUnassigned, showInMine, statusFor } from '../lib/responsibility'
+import type { Task } from '../lib/types'
+
+const isStoreWide = (t: Task) => t.assignment_mode === 'everyone' || isUnassigned(t)
 import { addDays, dueState, fmt, todayStr } from '../lib/dates'
 import { sortTasks } from '../lib/selectors'
 import { repo } from '../lib/client'
@@ -33,7 +36,8 @@ export function CalendarPage() {
     return () => window.removeEventListener(TEMPLATES_CHANGED, load)
   }, [store])
 
-  const visible = tasks.filter((t) => !t.parent_id && t.due_date && (scope === 'all' || showInMine(t, uid)))
+  // 自分: 自分の担当＋店舗全体のタスク / 店舗全体: 「全員が実施」「未割当（誰か1人）」で登録したタスクだけ（個人の担当は出さない）
+  const visible = tasks.filter((t) => !t.parent_id && t.due_date && (scope === 'all' ? isStoreWide(t) : showInMine(t, uid)))
   const byDay = useMemo(() => {
     const m = new Map<string, typeof visible>()
     for (const t of visible) m.set(t.due_date!, [...(m.get(t.due_date!) ?? []), t])
@@ -51,8 +55,8 @@ export function CalendarPage() {
     const tomorrow = addDays(today, 1)
     for (const tpl of templates) {
       if (!tpl.active) continue
-      const mine = tpl.assignment_mode === 'everyone' || !tpl.assignee_id || tpl.assignee_id === uid
-      if (scope === 'mine' && !mine) continue
+      const storeWide = tpl.assignment_mode === 'everyone' || !tpl.assignee_id
+      if (scope === 'all' ? !storeWide : !(storeWide || tpl.assignee_id === uid)) continue
       for (const d of days) {
         if (d <= tomorrow || generated.has(`${tpl.id}:${d}`) || !occursOn(tpl, d)) continue
         m.set(d, [...(m.get(d) ?? []), tpl])
