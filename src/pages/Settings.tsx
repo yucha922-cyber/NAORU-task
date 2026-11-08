@@ -5,7 +5,7 @@ import { ColorPicker, Empty, Sheet } from '../components/ui'
 import { useApp } from '../lib/app'
 import { repo } from '../lib/client'
 import { todayStr } from '../lib/dates'
-import { CATEGORY_LABEL, PRIORITY_LABEL, ROLE_LABEL, WEEKDAY_LABEL, type Activity, type Role, type TaskTemplate, type TemplateInput } from '../lib/types'
+import { CATEGORY_LABEL, PRIORITY_LABEL, ROLE_LABEL, WEEKDAY_LABEL, type Activity, type Invitation, type Role, type TaskTemplate, type TemplateInput } from '../lib/types'
 
 export function Settings() {
   const app = useApp()
@@ -162,6 +162,9 @@ function Members() {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<Role>('staff')
   const [err, setErr] = useState<string | null>(null)
+  const [invites, setInvites] = useState<Invitation[]>([])
+  const loadInvites = () => repo.listInvitations(app.store!.id).then(setInvites).catch(() => {})
+  useEffect(() => { loadInvites() }, [app.store?.id]) // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <section>
       <h2 className="section-title">スタッフ・権限</h2>
@@ -183,8 +186,20 @@ function Members() {
             )}
           </div>
         ))}
+        {invites.map((i) => (
+          <div key={i.email} className="flex items-center gap-2 px-4 py-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 text-sm"><span className="chip bg-amber-50 text-amber-700">招待中</span>{ROLE_LABEL[i.role]}</div>
+              <div className="truncate text-[11px] text-neutral-400">{i.email}（本人がアカウント登録すると自動で参加）</div>
+            </div>
+            <button className="h-9 rounded-lg px-2 text-xs text-neutral-500" onClick={async () => {
+              if (!confirm(`${i.email} への招待を取り消しますか？`)) return
+              await repo.cancelInvitation(app.store!.id, i.email); loadInvites()
+            }}>取り消し</button>
+          </div>
+        ))}
         <div className="space-y-2 p-4">
-          <div className="text-xs text-neutral-500">スタッフを追加（本人が先にアカウント登録している必要があります）</div>
+          <div className="text-xs text-neutral-500">スタッフを追加（未登録のメールアドレスも追加できます。本人がそのアドレスでアカウント登録すると、自動でこの店舗に参加します）</div>
           <input type="email" className="field" placeholder="メールアドレス" value={email} onChange={(e) => setEmail(e.target.value)} />
           <div className="flex gap-2">
             <select className="field" value={role} onChange={(e) => setRole(e.target.value as Role)}>
@@ -192,7 +207,11 @@ function Members() {
             </select>
             <button className="btn-primary shrink-0" disabled={!email} onClick={async () => {
               setErr(null)
-              try { await repo.addMember(app.store!.id, email, role); setEmail(''); app.reload(); app.setToast('追加しました') } catch (e) { setErr((e as Error).message) }
+              try {
+                const r = await repo.addMember(app.store!.id, email, role)
+                setEmail(''); app.reload(); loadInvites()
+                app.setToast({ tone: 'success', message: r === 'added' ? '追加しました' : '招待しました。本人がこのメールアドレスでアカウント登録すると、自動でこの店舗に参加します' })
+              } catch (e) { setErr((e as Error).message) }
             }}>追加</button>
           </div>
           {err && <p className="text-sm text-red-600">{err}</p>}

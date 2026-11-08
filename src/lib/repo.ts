@@ -1,4 +1,4 @@
-import type { Activity, CalendarLink, GoogleAccount, Member, Role, Store, Task, TaskInput, TaskTemplate, TemplateInput } from './types'
+import type { Activity, CalendarLink, GoogleAccount, Invitation, Member, Role, Store, Task, TaskInput, TaskTemplate, TemplateInput } from './types'
 
 export interface SessionUser {
   id: string
@@ -17,7 +17,10 @@ export interface Repo {
   myStores(): Promise<{ store: Store; role: Role }[]>
   createStore(name: string): Promise<string>
   listMembers(storeId: string): Promise<Member[]>
-  addMember(storeId: string, email: string, role: Role): Promise<void>
+  /** 登録済みなら即追加（'added'）、未登録なら招待（'invited'：本人の登録時に自動参加） */
+  addMember(storeId: string, email: string, role: Role): Promise<'added' | 'invited'>
+  listInvitations(storeId: string): Promise<Invitation[]>
+  cancelInvitation(storeId: string, email: string): Promise<void>
   updateMember(id: string, patch: { role?: Role; active?: boolean }): Promise<void>
   updateMyName(name: string): Promise<void>
 

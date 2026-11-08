@@ -16,6 +16,7 @@ interface DB {
   activity: Activity[]
   links: CalendarLink[]
   gaccounts?: GoogleAccount[]
+  invitations?: { store_id: string; email: string; role: Role; created_at: string }[]
   session: string | null
 }
 
@@ -138,11 +139,23 @@ export function createDemoRepo(): Repo {
     },
     async addMember(storeId, email, r) {
       if (role(storeId) !== 'admin') throw new Error('権限がありません')
-      const p = db.profiles.find((x) => x.email === email.trim().toLowerCase())
-      if (!p) throw new Error('このメールアドレスのユーザーが未登録です')
+      const em = email.trim().toLowerCase()
+      const p = db.profiles.find((x) => x.email === em)
+      if (!p) {
+        db.invitations = (db.invitations ?? []).filter((i) => !(i.store_id === storeId && i.email === em))
+        db.invitations.push({ store_id: storeId, email: em, role: r, created_at: now() })
+        save(); return 'invited'
+      }
       const m = db.memberships.find((x) => x.store_id === storeId && x.user_id === p.id)
       if (m) { m.role = r; m.active = true } else db.memberships.push({ id: uuid(), store_id: storeId, user_id: p.id, role: r, active: true })
-      save()
+      save(); return 'added'
+    },
+    async listInvitations(storeId) {
+      return (db.invitations ?? []).filter((i) => i.store_id === storeId).map(({ email, role, created_at }) => ({ email, role, created_at }))
+    },
+    async cancelInvitation(storeId, email) {
+      if (role(storeId) !== 'admin') throw new Error('権限がありません')
+      db.invitations = (db.invitations ?? []).filter((i) => !(i.store_id === storeId && i.email === email)); save()
     },
     async updateMember(id, patch) {
       const m = db.memberships.find((x) => x.id === id)

@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import type { Repo, SessionUser } from './repo'
-import type { Activity, CalendarLink, GoogleAccount, Member, Role, Store, Task, TaskTemplate } from './types'
+import type { Activity, CalendarLink, GoogleAccount, Invitation, Member, Role, Store, Task, TaskTemplate } from './types'
 
 const JA: [RegExp, string][] = [
   [/Invalid login credentials/i, 'メールアドレスまたはパスワードが違います'],
@@ -69,7 +69,20 @@ export function createSupabaseRepo(url: string, key: string): Repo {
       return rows as Member[]
     },
     async addMember(storeId, email, role) {
-      check(await sb.rpc('add_member_by_email', { p_store: storeId, p_email: email, p_role: role }))
+      const r = await sb.rpc('invite_member', { p_store: storeId, p_email: email, p_role: role })
+      if (r.error && /invite_member|function/i.test(r.error.message) && /find|exist/i.test(r.error.message)) {
+        // 0004 未適用のDBでは従来どおり（登録済みユーザーのみ追加）
+        check(await sb.rpc('add_member_by_email', { p_store: storeId, p_email: email, p_role: role }))
+        return 'added'
+      }
+      return check(r) as 'added' | 'invited'
+    },
+    async listInvitations(storeId) {
+      const r = await sb.from('store_invitations').select('email, role, created_at').eq('store_id', storeId).order('created_at')
+      return r.error ? [] : (r.data as Invitation[]) // 0004 未適用なら空
+    },
+    async cancelInvitation(storeId, email) {
+      check(await sb.from('store_invitations').delete().eq('store_id', storeId).eq('email', email))
     },
     async updateMember(id, patch) {
       check(await sb.from('memberships').update(patch).eq('id', id))
