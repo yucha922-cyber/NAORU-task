@@ -5,10 +5,7 @@ import { TaskSheet } from '../components/TaskSheet'
 import { Empty, Sheet } from '../components/ui'
 import { useApp } from '../lib/app'
 import { useCalendarSync } from '../lib/calendarManager'
-import { isUnassigned, showInMine, statusFor } from '../lib/responsibility'
-import type { Task } from '../lib/types'
-
-const isStoreWide = (t: Task) => t.assignment_mode === 'everyone' || isUnassigned(t)
+import { isStoreWide, showInMine, statusFor } from '../lib/responsibility'
 import { addDays, dueState, fmt, todayStr } from '../lib/dates'
 import { sortTasks } from '../lib/selectors'
 import { repo } from '../lib/client'

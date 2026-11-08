@@ -33,6 +33,12 @@ export interface Membership {
   active: boolean
 }
 
+export interface Invitation {
+  email: string
+  role: Role
+  created_at: string
+}
+
 export interface Member extends Membership {
   profile: Profile
 }

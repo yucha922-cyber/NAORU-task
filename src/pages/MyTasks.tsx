@@ -5,16 +5,26 @@ import { useApp } from '../lib/app'
 import { repo } from '../lib/client'
 import { effectiveTasks, inBucket, sortTasks, type Bucket } from '../lib/selectors'
 import type { Task } from '../lib/types'
-import { isAssignedTo, isUnassigned, showInMine } from '../lib/responsibility'
+import { isAssignedTo, isStoreWide, isUnassigned, showInMine } from '../lib/responsibility'
 
 type View = Bucket | 'history'
+/** 自分: 自分の担当＋店舗全体 / 店舗全体: 全員・未割当のタスクだけ / 全スタッフ: すべて（院長・管理者のみ） */
+type Scope = 'mine' | 'store' | 'everyone'
+const SCOPE_LABEL: Record<Scope, string> = { mine: '自分', store: '店舗全体', everyone: '全スタッフ' }
+
+function inScope(t: Task, scope: Scope, uid: string) {
+  if (scope === 'everyone') return true
+  if (scope === 'store') return isStoreWide(t)
+  return showInMine(t, uid)
+}
 
 export function MyTasks() {
   const app = useApp()
   const [view, setView] = useState<View>('today')
-  const [scope, setScope] = useState<'mine' | 'all'>('mine')
+  const [scope, setScope] = useState<Scope>('mine')
   const uid = app.user!.id
-  const base = effectiveTasks(app.tasks, uid).filter((t) => scope === 'all' || showInMine(t, uid))
+  const scopes: Scope[] = app.isManager ? ['mine', 'store', 'everyone'] : ['mine', 'store']
+  const base = effectiveTasks(app.tasks, uid).filter((t) => inScope(t, scope, uid))
   const count = (b: Bucket) => base.filter((t) => inBucket(t, b)).length
   const list = view === 'history' ? [] : base.filter((t) => inBucket(t, view)).sort(sortTasks)
 
@@ -23,8 +33,8 @@ export function MyTasks() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">マイタスク</h1>
         <div className="flex rounded-xl border border-neutral-200 bg-white p-0.5 text-xs">
-          {(['mine', 'all'] as const).map((s) => (
-            <button key={s} onClick={() => setScope(s)} className={`h-8 rounded-lg px-3 ${scope === s ? 'bg-ink text-white' : 'text-neutral-500'}`}>{s === 'mine' ? '自分' : '店舗全体'}</button>
+          {scopes.map((s) => (
+            <button key={s} onClick={() => setScope(s)} className={`h-8 rounded-lg px-2.5 ${scope === s ? 'bg-ink text-white' : 'text-neutral-500'}`}>{SCOPE_LABEL[s]}</button>
           ))}
         </div>
       </div>
@@ -38,7 +48,7 @@ export function MyTasks() {
       ]} />
       {view === 'history' ? <History scope={scope} /> : (
         <div className="space-y-2">
-          {list.length ? list.map((t) => <TaskItem key={t.id} task={t} showAssignee={scope === 'all' || isUnassigned(t)} />) : <Empty>該当するタスクはありません</Empty>}
+          {list.length ? list.map((t) => <TaskItem key={t.id} task={t} showAssignee={scope !== 'mine' || isUnassigned(t)} />) : <Empty>該当するタスクはありません</Empty>}
         </div>
       )}
     </div>
@@ -47,7 +57,7 @@ export function MyTasks() {
 
 const PAGE = 30
 
-function History({ scope }: { scope: 'mine' | 'all' }) {
+function History({ scope }: { scope: Scope }) {
   const app = useApp()
   const [rows, setRows] = useState<Task[]>([])
   const [more, setMore] = useState(true)
@@ -58,7 +68,7 @@ function History({ scope }: { scope: 'mine' | 'all' }) {
   }
   // ページ単位で取得（全件取得しない）
   useEffect(() => { load(0).catch((e) => app.setToast(e.message)) }, [app.store?.id]) // eslint-disable-line react-hooks/exhaustive-deps
-  const shown = rows.filter((t) => scope === 'all' || isAssignedTo(t, app.user!.id) || t.completed_by === app.user!.id)
+  const shown = rows.filter((t) => scope === 'everyone' || (scope === 'store' ? isStoreWide(t) : isAssignedTo(t, app.user!.id) || t.completed_by === app.user!.id))
   return (
     <div className="space-y-2">
       {shown.map((t) => (

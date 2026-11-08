@@ -27,6 +27,11 @@ export function everyoneProgress(t: Task) {
   return { done, total: t.assignees.length }
 }
 
+/** 店舗全体のタスク（「全員が実施」または「未割当＝誰か1人」で登録したもの） */
+export function isStoreWide(t: Task) {
+  return t.assignment_mode === 'everyone' || isUnassigned(t)
+}
+
 /** 一覧の「自分」に表示するか（担当 or 未割当） */
 export function showInMine(t: Task, uid: string) {
   return isAssignedTo(t, uid) || isUnassigned(t)
