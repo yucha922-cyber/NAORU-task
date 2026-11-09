@@ -5,7 +5,8 @@ import { TaskSheet } from '../components/TaskSheet'
 import { Empty, Sheet } from '../components/ui'
 import { useApp } from '../lib/app'
 import { useCalendarSync } from '../lib/calendarManager'
-import { isStoreWide, showInMine, statusFor } from '../lib/responsibility'
+import { isAssignedTo, isStoreWide, showInMine, statusFor } from '../lib/responsibility'
+import { StaffFilter } from '../components/StaffFilter'
 import { addDays, dueState, fmt, todayStr } from '../lib/dates'
 import { sortTasks } from '../lib/selectors'
 import { repo } from '../lib/client'
@@ -13,14 +14,16 @@ import { occursOn, TEMPLATES_CHANGED } from '../lib/recurrence'
 import type { TaskTemplate } from '../lib/types'
 
 export function CalendarPage() {
-  const { tasks, user, store } = useApp()
+  const { tasks, user, store, isManager, members } = useApp()
   const uid = user!.id
   const today = todayStr()
   const [month, setMonth] = useState(today.slice(0, 7))
   const [sel, setSel] = useState(today)
   const [adding, setAdding] = useState(false)
   const [picking, setPicking] = useState(false)
-  const [scope, setScope] = useState<'mine' | 'all'>('mine')
+  // 自分 / 店舗全体 / 全スタッフ（院長・管理者のみ。スタッフで絞り込み可）
+  const [scope, setScope] = useState<'mine' | 'all' | 'staff'>('mine')
+  const [staff, setStaff] = useState('')
   const [templates, setTemplates] = useState<TaskTemplate[]>([])
   const touch = useRef<{ x: number; y: number } | null>(null)
 
@@ -34,7 +37,9 @@ export function CalendarPage() {
   }, [store])
 
   // 自分: 自分の担当＋店舗全体のタスク / 店舗全体: 「全員が実施」「未割当（誰か1人）」で登録したタスクだけ（個人の担当は出さない）
-  const visible = tasks.filter((t) => !t.parent_id && t.due_date && (scope === 'all' ? isStoreWide(t) : showInMine(t, uid)))
+  const visible = tasks.filter((t) => !t.parent_id && t.due_date && (
+    scope === 'all' ? isStoreWide(t) : scope === 'staff' ? (!staff || isAssignedTo(t, staff)) : showInMine(t, uid)))
+  const viewer = scope === 'staff' && staff ? staff : uid // 完了状態・点の色を誰の視点で見るか
   const byDay = useMemo(() => {
     const m = new Map<string, typeof visible>()
     for (const t of visible) m.set(t.due_date!, [...(m.get(t.due_date!) ?? []), t])
@@ -54,14 +59,15 @@ export function CalendarPage() {
       if (!tpl.active) continue
       const storeWide = tpl.assignment_mode !== 'single' || !tpl.assignee_id
       const mineTpl = tpl.assignment_mode === 'everyone' || (tpl.assignment_mode === 'group' ? (tpl.assignee_ids ?? []).includes(uid) : !tpl.assignee_id || tpl.assignee_id === uid)
-      if (scope === 'all' ? !storeWide : !mineTpl) continue
+      const forStaff = tpl.assignment_mode === 'everyone' || (tpl.assignment_mode === 'group' ? (tpl.assignee_ids ?? []).includes(staff) : tpl.assignee_id === staff)
+      if (scope === 'all' ? !storeWide : scope === 'staff' ? (staff ? !forStaff : false) : !mineTpl) continue
       for (const d of days) {
         if (d <= tomorrow || generated.has(`${tpl.id}:${d}`) || !occursOn(tpl, d)) continue
         m.set(d, [...(m.get(d) ?? []), tpl])
       }
     }
     return m
-  }, [templates, tasks, month, scope, uid, today]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [templates, tasks, month, scope, staff, uid, today]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const shift = (n: number) => { const [y, m] = month.split('-').map(Number); setMonth(fmt(new Date(Date.UTC(y, m - 1 + n, 1, 12))).slice(0, 7)) }
   // 横スワイプで前月・翌月（縦スクロールと区別するため、横方向が大きい場合のみ）
@@ -82,11 +88,13 @@ export function CalendarPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">カレンダー</h1>
         <div className="flex rounded-xl border border-neutral-200 bg-white p-0.5 text-xs">
-          {(['mine', 'all'] as const).map((s) => (
-            <button key={s} onClick={() => setScope(s)} className={`h-8 rounded-lg px-3 ${scope === s ? 'bg-ink text-white' : 'text-neutral-500'}`}>{s === 'mine' ? '自分' : '店舗全体'}</button>
+          {(isManager ? ['mine', 'all', 'staff'] as const : ['mine', 'all'] as const).map((s) => (
+            <button key={s} onClick={() => setScope(s)} className={`h-8 rounded-lg px-2.5 ${scope === s ? 'bg-ink text-white' : 'text-neutral-500'}`}>{s === 'mine' ? '自分' : s === 'all' ? '店舗全体' : '全スタッフ'}</button>
           ))}
         </div>
       </div>
+
+      {scope === 'staff' && <StaffFilter members={members} value={staff} onChange={setStaff} />}
 
       <div className="card touch-pan-y p-3" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
         <div className="mb-2 flex items-center justify-between">
@@ -103,7 +111,7 @@ export function CalendarPage() {
           {Array.from({ length: startPad }, (_, i) => <div key={`pad${i}`} />)}
           {days.map((d) => {
             const ts = byDay.get(d) ?? []
-            const open = ts.filter((t) => statusFor(t, uid) === 'open')
+            const open = ts.filter((t) => statusFor(t, viewer) === 'open')
             const st = (t: (typeof ts)[number]) => dueState({ status: 'open', due_date: t.due_date })
             // 重要度「高」の未完了タスクがある日は日付を赤丸で囲む（点は期限の状態を表すため別の印にする）
             const important = open.some((t) => t.priority === 'high') || (planned.get(d) ?? []).some((p) => p.priority === 'high')
@@ -140,7 +148,7 @@ export function CalendarPage() {
           <button className="mb-2 min-h-9 text-xs text-neutral-500" onClick={() => setAdding(true)}>＋ この日に追加</button>
         </div>
         <div className="space-y-2">
-          {selTasks.map((t) => <TaskItem key={t.id} task={t} showAssignee={scope === 'all'} />)}
+          {selTasks.map((t) => <TaskItem key={t.id} task={t} showAssignee={scope !== 'mine'} />)}
           {selPlanned.map((p) => (
             <div key={p.id} className="card flex items-center gap-3 border-dashed px-4 py-3 text-sm text-neutral-500">
               <span aria-hidden>↻</span>
