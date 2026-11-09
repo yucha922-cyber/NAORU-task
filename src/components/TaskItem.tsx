@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useApp } from '../lib/app'
 import { dueState, labelDate } from '../lib/dates'
 import { childrenOf, progress } from '../lib/selectors'
-import { everyoneProgress, isAssignedTo, statusFor } from '../lib/responsibility'
+import { everyoneProgress, isAssignedTo, isMulti, statusFor } from '../lib/responsibility'
 import { CATEGORY_LABEL, colorHex, type Task } from '../lib/types'
 import { Bar } from './ui'
 import { TaskSheet } from './TaskSheet'
@@ -21,7 +21,7 @@ export function CheckButton({ task }: { task: Task }) {
   const done = status === 'done'
   const st = dueState({ status, due_date: task.due_date })
   // 全員向けタスクで自分が対象外（例: 院長が全体を見ている）の場合は押せない
-  const locked = task.assignment_mode === 'everyone' && !isAssignedTo(task, user!.id)
+  const locked = isMulti(task) && !isAssignedTo(task, user!.id)
   const ring = done ? 'border-emerald-500 bg-emerald-500 text-white' : st === 'overdue' ? 'border-red-400' : st === 'soon' ? 'border-orange-400' : 'border-neutral-300'
   return (
     <button onClick={(e) => { e.stopPropagation(); if (locked) setToast({ message: '全員向けタスクは、各自が自分の分を完了にします', tone: 'info' }); else toggleDone(task) }}
@@ -62,7 +62,7 @@ export function TaskItem({ task, showAssignee = true, compact = false }: { task:
             {task.category !== 'general' && !compact && <span className="chip bg-neutral-100 text-neutral-600">{CATEGORY_LABEL[task.category]}</span>}
             {task.template_id && !compact && <span className="text-neutral-400" title="繰り返し">↻</span>}
             {task.work_start && <span className="text-neutral-500">作業 {task.work_date !== task.due_date ? labelDate(task.work_date) + ' ' : ''}{task.work_start}〜{task.work_end}</span>}
-            {ev ? <span className="chip bg-sky-50 text-sky-700">全員 {ev.done}/{ev.total}</span>
+            {ev ? <span className="chip bg-sky-50 text-sky-700">{task.assignment_mode === 'everyone' ? '全員' : task.assignees.map((a) => memberName(a.user_id)).join('・')} {ev.done}/{ev.total}</span>
               : showAssignee && <span className={task.assignee_id ? 'text-neutral-500' : 'chip bg-amber-50 text-amber-700'}>{task.assignee_id ? memberName(task.assignee_id) : '未割当・誰か1人'}</span>}
           </div>
           {prog && (

@@ -3,7 +3,7 @@ import { repo } from './client'
 import type { SessionUser } from './repo'
 import type { Member, Role, Store, Task, TaskInput } from './types'
 import { todayStr } from './dates'
-import { statusFor } from './responsibility'
+import { isMulti, statusFor } from './responsibility'
 
 const RECENT_DAYS = 31
 const REFRESH_THROTTLE_MS = 60_000
@@ -125,8 +125,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     async function setDone(t: Task, done: boolean) {
       const uid = user!.id
-      const mine = t.assignment_mode === 'everyone' && t.assignees.some((a) => a.user_id === uid)
-      if (t.assignment_mode === 'everyone' && !mine) throw new Error('全員向けタスクは、各自が自分の分を完了にします')
+      const multi = isMulti(t)
+      const mine = multi && t.assignees.some((a) => a.user_id === uid)
+      if (multi && !mine) throw new Error('複数人のタスクは、担当の各自が自分の分を完了にします')
       // 楽観的更新でワンタップ即反映。失敗時は元に戻す
       const at = done ? new Date().toISOString() : null
       apply((p) => p.map((x) => x.id !== t.id ? x : mine

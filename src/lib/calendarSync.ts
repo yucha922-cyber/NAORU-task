@@ -124,6 +124,7 @@ export function buildEvent(t: Task, uid: string, children: Task[] = [], tz = 'As
   if (t.due_date) lines.push(`期限: ${md(t.due_date)}${t.due_time ? ' ' + t.due_time : ''}`)
   if (hasWork) lines.push(`作業: ${md(t.work_date!)} ${t.work_start}〜${t.work_end}`)
   if (t.assignment_mode === 'everyone') lines.push('全員が各自実施するタスク')
+  if (t.assignment_mode === 'group') lines.push(`選んだメンバー（${t.assignees.length}人）が各自実施するタスク`)
   const kids = children.filter((c) => !c.deleted_at)
   if (kids.length) {
     const doneCount = kids.filter((c) => c.status === 'done').length

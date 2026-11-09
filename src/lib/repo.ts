@@ -32,6 +32,8 @@ export interface Repo {
   setDone(id: string, done: boolean): Promise<Task>
   /** 全員向けタスクで自分の分だけ完了/未完了にする */
   setMyDone(id: string, done: boolean): Promise<Task>
+  /** 「選んだメンバー」タスクのメンバーを設定（2人以上） */
+  setAssignees(id: string, userIds: string[]): Promise<void>
   deleteTask(id: string): Promise<void>
   /** 削除済みも含めて ID で取得（カレンダー同期の後始末用） */
   getTasksByIds(ids: string[]): Promise<Task[]>

@@ -6,7 +6,7 @@ import type { TaskTemplate } from './types'
 const base: TaskTemplate = {
   id: 't', store_id: 's', title: 'x', description: '', assignee_id: null, priority: 'medium', category: 'general',
   frequency: 'daily', interval_days: null, weekdays: [], day_of_month: null, due_time: null,
-  start_date: '2026-11-01', end_date: null, last_generated_date: null, active: true, assignment_mode: 'single', color_id: null,
+  start_date: '2026-11-01', end_date: null, last_generated_date: null, active: true, assignment_mode: 'single', color_id: null, assignee_ids: [],
 }
 
 describe('recurrence', () => {

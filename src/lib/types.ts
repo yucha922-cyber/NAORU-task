@@ -4,8 +4,8 @@ export type TaskStatus = 'open' | 'done'
 /** 業務カテゴリ。日報・カルテは院長画面で提出状況を集計する */
 export type Category = 'general' | 'daily_report' | 'karte' | 'cleaning' | 'blog' | 'report'
 export type Frequency = 'daily' | 'weekly' | 'interval' | 'monthly'
-/** single: 担当者1人 or 未割当（誰か1人が実施すれば完了） / everyone: 全員が各自実施 */
-export type AssignmentMode = 'single' | 'everyone'
+/** single: 担当者1人 or 未割当（誰か1人が実施すれば完了） / everyone: 全員が各自実施 / group: 選んだメンバーが各自実施 */
+export type AssignmentMode = 'single' | 'everyone' | 'group'
 
 export interface TaskAssignee {
   user_id: string
@@ -98,6 +98,8 @@ export interface TaskTemplate {
   active: boolean
   assignment_mode: AssignmentMode
   color_id: string | null
+  /** group のときのメンバー */
+  assignee_ids: string[]
 }
 
 export type TemplateInput = Omit<TaskTemplate, 'id' | 'store_id' | 'last_generated_date'>

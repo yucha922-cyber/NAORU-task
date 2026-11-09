@@ -127,6 +127,9 @@ export function createSupabaseRepo(url: string, key: string): Repo {
       if (!rows.length) throw new Error('このタスクの担当に含まれていません')
       return toTask(check(await sb.from('tasks').select(TASK_SEL).eq('id', id).single()) as unknown as TaskRow)
     },
+    async setAssignees(id, userIds) {
+      check(await sb.rpc('set_task_assignees', { p_task: id, p_users: userIds }))
+    },
     async getTasksByIds(ids) {
       const out: Task[] = []
       for (let i = 0; i < ids.length; i += 100) {
