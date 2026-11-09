@@ -58,6 +58,7 @@ export function Login() {
           </button>
         </form>
       )}
+      <a href={`${import.meta.env.BASE_URL}privacy.html`} className="mt-10 text-center text-xs text-neutral-400 underline">プライバシーポリシー</a>
     </div>
   )
 }
