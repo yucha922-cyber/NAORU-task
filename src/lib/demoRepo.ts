@@ -54,7 +54,7 @@ function seed(): DB {
   const tpl = (p: Partial<TaskTemplate>): TaskTemplate => ({
     id: uuid(), store_id: store.id, title: '', description: '', assignee_id: null, priority: 'medium', category: 'general',
     frequency: 'daily', interval_days: null, weekdays: [], day_of_month: null, due_time: null,
-    start_date: addDays(today, -2), end_date: null, last_generated_date: null, active: true, assignment_mode: 'single', color_id: null, ...p,
+    start_date: addDays(today, -2), end_date: null, last_generated_date: null, active: true, assignment_mode: 'single', color_id: null, assignee_ids: [], ...p,
   })
   const templates = [
     tpl({ title: 'カルテ入力', category: 'karte', assignee_id: sato.id, due_time: '21:00' }),
@@ -76,7 +76,7 @@ export function createDemoRepo(): Repo {
         const d = JSON.parse(raw) as DB
         // 旧バージョンのデモデータを新しい形式に補完（既存データは保持）
         d.tasks = d.tasks.map((t) => Object.assign({ assignment_mode: 'single', color_id: null, work_date: null, work_start: null, work_end: null, assignees: [] }, t))
-        d.templates = d.templates.map((t) => Object.assign({ assignment_mode: 'single', color_id: null }, t))
+        d.templates = d.templates.map((t) => Object.assign({ assignment_mode: 'single', color_id: null, assignee_ids: [] }, t))
         d.gaccounts ??= []
         return d
       }
@@ -179,12 +179,11 @@ export function createDemoRepo(): Repo {
     },
     async createTask(storeId, input) {
       requireMember(storeId)
-      if (input.assignee_id && input.assignee_id !== db.session && !isManager(storeId)) throw new Error('他のスタッフへの割り当ては院長・管理者のみ可能です')
       if (input.parent_id) {
         const p = findTask(input.parent_id)
         if (p.parent_id) throw new Error('親子タスクは2階層までです')
       }
-      if (input.assignment_mode === 'everyone' && input.assignee_id) throw new Error('全員向けタスクには担当者を指定できません')
+      if (input.assignment_mode !== 'single' && input.assignee_id) throw new Error('複数人のタスクには担当者1人を指定できません')
       const t: Task = {
         id: uuid(), store_id: storeId, status: 'open', completed_at: null, completed_by: null, template_id: null, occurrence_date: null,
         created_by: me(), created_at: now(), updated_at: now(), deleted_at: null, ...input,
@@ -195,14 +194,13 @@ export function createDemoRepo(): Repo {
     async updateTask(id, patch) {
       const t = findTask(id)
       if (!canEdit(t)) throw new Error('権限がありません')
-      if (patch.assignee_id && patch.assignee_id !== db.session && !isManager(t.store_id)) throw new Error('他のスタッフへの割り当ては院長・管理者のみ可能です')
       const changes: Record<string, unknown> = {}
       for (const [k, v] of Object.entries(patch)) {
         const old = (t as unknown as Record<string, unknown>)[k]
         if (old !== v) changes[k] = { from: old, to: v }
       }
       if (patch.assignment_mode && patch.assignment_mode !== t.assignment_mode) {
-        t.assignees = patch.assignment_mode === 'everyone' ? everyoneRows(t.store_id) : []
+        t.assignees = patch.assignment_mode === 'everyone' ? everyoneRows(t.store_id) : patch.assignment_mode === 'group' ? t.assignees : []
       }
       Object.assign(t, patch, { updated_at: now() })
       if (Object.keys(changes).length) log(t, 'update', changes)
@@ -225,6 +223,18 @@ export function createDemoRepo(): Repo {
       if (allDone && t.status === 'open') Object.assign(t, { status: 'done', completed_at: now(), completed_by: db.session })
       if (!allDone && t.status === 'done') Object.assign(t, { status: 'open', completed_at: null, completed_by: null })
       save(); return t
+    },
+    async setAssignees(id, userIds) {
+      const t = findTask(id)
+      if (t.assignment_mode !== 'group') throw new Error('メンバー選択のタスクではありません')
+      if (userIds.length < 2) throw new Error('2人以上選んでください')
+      const keep = t.assignees.filter((a) => userIds.includes(a.user_id))
+      const add = userIds.filter((u) => !keep.some((a) => a.user_id === u)).map((u) => ({ user_id: u, status: 'open' as const, completed_at: null }))
+      t.assignees = [...keep, ...add]
+      const allDone = t.assignees.every((a) => a.status === 'done')
+      if (allDone && t.status === 'open') Object.assign(t, { status: 'done', completed_at: now(), completed_by: db.session })
+      if (!allDone && t.status === 'done') Object.assign(t, { status: 'open', completed_at: null, completed_by: null })
+      save()
     },
     async getTasksByIds(ids) { return db.tasks.filter((t) => ids.includes(t.id)) },
     async deleteTask(id) {
@@ -259,9 +269,10 @@ export function createDemoRepo(): Repo {
             priority: tpl.priority, category: tpl.category, due_date: d, due_time: tpl.due_time, status: 'open', completed_at: null,
             completed_by: null, template_id: tpl.id, occurrence_date: d, created_by: me(), created_at: now(), updated_at: now(), deleted_at: null,
             assignment_mode: tpl.assignment_mode, color_id: tpl.color_id ?? null, work_date: null, work_start: null, work_end: null,
-            assignees: tpl.assignment_mode === 'everyone' ? everyoneRows(storeId) : [],
+            assignees: tpl.assignment_mode === 'everyone' ? everyoneRows(storeId)
+              : tpl.assignment_mode === 'group' ? everyoneRows(storeId).filter((a) => (tpl.assignee_ids ?? []).includes(a.user_id)) : [],
           }
-          if (tpl.assignment_mode === 'everyone') t.assignee_id = null
+          if (tpl.assignment_mode !== 'single') t.assignee_id = null
           db.tasks.push(t); n++
         }
         if (!tpl.last_generated_date || tpl.last_generated_date < until) tpl.last_generated_date = until

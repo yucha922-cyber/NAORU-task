@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { GoogleSyncPanel } from '../components/GoogleSyncPanel'
+import { AssigneePicker, validateAssignment } from '../components/AssigneePicker'
 import { notifyTemplatesChanged } from '../lib/recurrence'
 import { ColorPicker, Empty, Sheet } from '../components/ui'
 import { useApp } from '../lib/app'
@@ -68,7 +69,7 @@ function Templates() {
           <button key={t.id} className="flex w-full items-center justify-between px-4 py-3 text-left" onClick={() => setEdit(t)}>
             <div>
               <div className="text-sm">{t.title}</div>
-              <div className="text-[11px] text-neutral-500">{freqLabel(t)}{t.due_time && ` ${t.due_time}まで`}・{t.assignment_mode === 'everyone' ? '全員' : t.assignee_id ? app.memberName(t.assignee_id) : '誰か1人'}</div>
+              <div className="text-[11px] text-neutral-500">{freqLabel(t)}{t.due_time && ` ${t.due_time}まで`}・{t.assignment_mode === 'everyone' ? '全員' : t.assignment_mode === 'group' ? (t.assignee_ids ?? []).map((id) => app.memberName(id)).join('・') : t.assignee_id ? app.memberName(t.assignee_id) : '誰か1人'}</div>
             </div>
             <span className="text-neutral-300">›</span>
           </button>
@@ -85,17 +86,19 @@ function TemplateSheet({ tpl, onClose }: { tpl?: TaskTemplate; onClose(): void }
   const app = useApp()
   const [f, setF] = useState<TemplateInput>(() => tpl ? { ...tpl } : {
     title: '', description: '', assignee_id: null, priority: 'medium', category: 'general', frequency: 'daily',
-    interval_days: 3, weekdays: [1], day_of_month: 1, due_time: null, start_date: todayStr(), end_date: null, active: true, assignment_mode: 'single', color_id: null,
+    interval_days: 3, weekdays: [1], day_of_month: 1, due_time: null, start_date: todayStr(), end_date: null, active: true, assignment_mode: 'single', color_id: null, assignee_ids: [],
   })
   const [err, setErr] = useState<string | null>(null)
   const set = <K extends keyof TemplateInput>(k: K, v: TemplateInput[K]) => setF((p) => ({ ...p, [k]: v }))
   async function save() {
     if (!f.title.trim()) return setErr('タスク名を入力してください')
     if (f.frequency === 'weekly' && !f.weekdays.length) return setErr('曜日を選択してください')
+    const v = validateAssignment({ mode: f.assignment_mode, assigneeId: f.assignee_id, groupIds: f.assignee_ids ?? [] })
+    if (v) return setErr(v)
     try {
       const { ...input } = f
       delete (input as Partial<TaskTemplate>).id; delete (input as Partial<TaskTemplate>).store_id; delete (input as Partial<TaskTemplate>).last_generated_date
-      await repo.saveTemplate(app.store!.id, { ...input, title: f.title.trim(), due_time: f.due_time || null, end_date: f.end_date || null }, tpl?.id)
+      await repo.saveTemplate(app.store!.id, { ...input, assignee_ids: f.assignment_mode === 'group' ? f.assignee_ids ?? [] : [], title: f.title.trim(), due_time: f.due_time || null, end_date: f.end_date || null }, tpl?.id)
       await repo.generateRecurring(app.store!.id)
       notifyTemplatesChanged()
       await app.reload()
@@ -106,17 +109,14 @@ function TemplateSheet({ tpl, onClose }: { tpl?: TaskTemplate; onClose(): void }
     <Sheet title={tpl ? '繰り返しタスクを編集' : '繰り返しタスクを追加'} onClose={onClose}>
       <div className="space-y-4">
         <div><label className="label">タスク名</label><input className="field" value={f.title} onChange={(e) => set('title', e.target.value)} placeholder="例：日報提出" /></div>
+        <div><label className="label">担当</label>
+          <AssigneePicker members={app.members}
+            value={{ mode: f.assignment_mode, assigneeId: f.assignee_id, groupIds: f.assignee_ids ?? [] }}
+            onChange={(a) => setF((p) => ({ ...p, assignment_mode: a.mode, assignee_id: a.mode === 'single' ? a.assigneeId : null, assignee_ids: a.groupIds }))} /></div>
         <div className="grid grid-cols-2 gap-3">
           <div><label className="label">種類</label>
             <select className="field" value={f.category} onChange={(e) => set('category', e.target.value as TemplateInput['category'])}>
               {Object.entries(CATEGORY_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select></div>
-          <div><label className="label">担当</label>
-            <select className="field" value={f.assignment_mode === 'everyone' ? '__everyone' : f.assignee_id ?? ''}
-              onChange={(e) => setF((p) => e.target.value === '__everyone' ? { ...p, assignment_mode: 'everyone', assignee_id: null } : { ...p, assignment_mode: 'single', assignee_id: e.target.value || null })}>
-              <option value="__everyone">全員が実施</option>
-              <option value="">未割当（誰か1人）</option>
-              {app.members.filter((m) => m.active).map((m) => <option key={m.user_id} value={m.user_id}>{m.profile.display_name}</option>)}
             </select></div>
           <div><label className="label">頻度</label>
             <select className="field" value={f.frequency} onChange={(e) => set('frequency', e.target.value as TemplateInput['frequency'])}>

@@ -371,6 +371,20 @@ describe('全員向けタスク', () => {
     expect(g.live(EMAIL[YUSA])[0].summary).toBe('✔ 日報提出')
     expect(g.live(EMAIL[SHOKO])[0].summary).toBe('日報提出')
   })
+  it('選んだメンバー（2人）だけのタスク: 2人のカレンダーに入り、外したメンバーからは消える', async () => {
+    db.link(BOSS)
+    const t = task({ title: '2人で準備', assignment_mode: 'group', assignees: [
+      { user_id: YUSA, status: 'open', completed_at: null }, { user_id: SHOKO, status: 'open', completed_at: null }] })
+    db.tasks.push(t)
+    await sync(YUSA); await sync(SHOKO); await sync(BOSS)
+    expect(g.live(EMAIL[YUSA]).map((e) => e.summary)).toEqual(['2人で準備'])
+    expect(g.live(EMAIL[SHOKO]).map((e) => e.summary)).toEqual(['2人で準備'])
+    expect(g.live(EMAIL[BOSS])).toHaveLength(0)
+    t.assignees = [{ user_id: SHOKO, status: 'open', completed_at: null }, { user_id: BOSS, status: 'open', completed_at: null }]
+    await sync(YUSA); await sync(BOSS)
+    expect(g.live(EMAIL[YUSA])).toHaveLength(0)
+    expect(g.live(EMAIL[BOSS]).map((e) => e.summary)).toEqual(['2人で準備'])
+  })
   it('対象外のスタッフには同期しない', async () => {
     db.tasks.push(task({ assignment_mode: 'everyone', assignees: [{ user_id: SHOKO, status: 'open', completed_at: null }] }))
     await sync(YUSA)

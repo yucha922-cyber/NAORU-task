@@ -52,8 +52,9 @@ export function CalendarPage() {
     const tomorrow = addDays(today, 1)
     for (const tpl of templates) {
       if (!tpl.active) continue
-      const storeWide = tpl.assignment_mode === 'everyone' || !tpl.assignee_id
-      if (scope === 'all' ? !storeWide : !(storeWide || tpl.assignee_id === uid)) continue
+      const storeWide = tpl.assignment_mode !== 'single' || !tpl.assignee_id
+      const mineTpl = tpl.assignment_mode === 'everyone' || (tpl.assignment_mode === 'group' ? (tpl.assignee_ids ?? []).includes(uid) : !tpl.assignee_id || tpl.assignee_id === uid)
+      if (scope === 'all' ? !storeWide : !mineTpl) continue
       for (const d of days) {
         if (d <= tomorrow || generated.has(`${tpl.id}:${d}`) || !occursOn(tpl, d)) continue
         m.set(d, [...(m.get(d) ?? []), tpl])

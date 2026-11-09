@@ -22,7 +22,7 @@ const syncStore: SyncStore = {
   saveLink: (l) => repo.saveCalendarLink(l),
   deleteLink: (id) => repo.deleteCalendarLink(id),
   fetchTasks: (ids) => repo.getTasksByIds(ids),
-  completeTask: (t) => (t.assignment_mode === 'everyone' ? repo.setMyDone(t.id, true) : repo.setDone(t.id, true)),
+  completeTask: (t) => (t.assignment_mode !== 'single' ? repo.setMyDone(t.id, true) : repo.setDone(t.id, true)),
 }
 
 interface CalendarSyncState {

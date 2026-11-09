@@ -6,8 +6,10 @@ import { notifyTemplatesChanged } from '../lib/recurrence'
 import { childrenOf } from '../lib/selectors'
 import { CATEGORY_LABEL, PRIORITY_LABEL, WEEKDAY_LABEL, type Category, type Frequency, type Priority, type Task, type TaskInput } from '../lib/types'
 import { ColorPicker, Sheet } from './ui'
+import { AssigneePicker, validateAssignment, type Assignment } from './AssigneePicker'
 
-const EVERYONE = '__everyone'
+const f0Mode = (t?: Task) => t?.assignment_mode ?? 'single'
+
 
 /** タスクの追加・編集。task 未指定なら新規、parentId 指定で小項目として追加 */
 export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Task; parentId?: string; defaultDate?: string; onClose(): void }) {
@@ -17,6 +19,11 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
     ? { title: task.title, description: task.description, assignee_id: task.assignee_id, priority: task.priority, category: task.category, due_date: task.due_date, due_time: task.due_time, parent_id: task.parent_id, assignment_mode: task.assignment_mode, work_date: task.work_date, work_start: task.work_start, work_end: task.work_end, color_id: task.color_id ?? null }
     : { title: '', description: '', assignee_id: parent?.assignee_id ?? app.user!.id, priority: 'medium', category: 'general', due_date: defaultDate ?? todayStr(), due_time: null, parent_id: parentId ?? null, assignment_mode: 'single', work_date: null, work_start: null, work_end: null, color_id: parent?.color_id ?? null })
   const [subs, setSubs] = useState('')
+  // 担当（「メンバーを選ぶ」の場合は複数人）
+  const [assign, setAssign] = useState<Assignment>(() => ({
+    mode: f0Mode(task), assigneeId: task ? task.assignee_id : parent?.assignee_id ?? app.user!.id,
+    groupIds: task?.assignment_mode === 'group' ? task.assignees.map((a) => a.user_id) : parent?.assignment_mode === 'group' ? parent.assignees.map((a) => a.user_id) : [],
+  }))
   // 繰り返し（新規の大項目のみ・院長/管理者）。設定すると繰り返しタスクとして登録する
   const [repeat, setRepeat] = useState<'none' | Frequency>('none')
   const [weekdays, setWeekdays] = useState<number[]>([])
@@ -35,9 +42,10 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
     repeat === 'monthly' ? `（毎月${Number(startDay.slice(8, 10))}日）` : repeat === 'weekly' ? '' : repeat === 'interval' ? `（${intervalDays}日ごと）` : '')
   const set = <K extends keyof TaskInput>(k: K, v: TaskInput[K]) => setF((p) => ({ ...p, [k]: v }))
 
-  const assignable = app.isManager ? app.members.filter((m) => m.active) : app.members.filter((m) => m.user_id === app.user!.id)
-  const assigneeValue = f.assignment_mode === 'everyone' ? EVERYONE : f.assignee_id ?? ''
-  const setAssignee = (v: string) => setF((p) => v === EVERYONE ? { ...p, assignment_mode: 'everyone', assignee_id: null } : { ...p, assignment_mode: 'single', assignee_id: v || null })
+  const onAssign = (a: Assignment) => {
+    setAssign(a)
+    setF((p) => ({ ...p, assignment_mode: a.mode, assignee_id: a.mode === 'single' ? a.assigneeId : null }))
+  }
 
   const today = todayStr()
   const quick = [
@@ -48,7 +56,7 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
     if (!f.title.trim()) return 'タスク名を入力してください'
     if (!!f.work_start !== !!f.work_end) return '作業時間は開始と終了の両方を入力してください'
     if (f.work_start && f.work_end && f.work_end <= f.work_start) return '作業の終了時刻は開始より後にしてください'
-    return null
+    return validateAssignment(assign)
   }
 
   async function submit() {
@@ -62,10 +70,14 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
       }
       const work = f.work_start ? { work_date: f.work_date || f.due_date || today } : { work_date: null, work_start: null, work_end: null }
       const input = { ...f, ...work, title: f.title.trim(), due_date: f.due_date || null, due_time: f.due_time || null }
-      if (task) await app.updateTask(task.id, input)
-      else {
+      if (task) {
+        await app.updateTask(task.id, input)
+        if (assign.mode === 'group') { await repo.setAssignees(task.id, assign.groupIds); await app.reload() }
+      } else {
         const created = await app.createTask(input)
+        if (assign.mode === 'group') await repo.setAssignees(created.id, assign.groupIds)
         if (!isChild) await createSubs(created)
+        if (assign.mode === 'group') await app.reload()
       }
       app.setToast({ message: task ? '保存しました' : 'タスクを追加しました', tone: 'success' })
       onClose()
@@ -78,13 +90,13 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
   async function createRepeating() {
     const start = f.due_date || today
     await repo.saveTemplate(app.store!.id, {
-      title: f.title.trim(), description: f.description, assignee_id: f.assignment_mode === 'everyone' ? null : f.assignee_id,
+      title: f.title.trim(), description: f.description, assignee_id: assign.mode === 'single' ? assign.assigneeId : null,
       priority: f.priority, category: f.category, frequency: repeat as Frequency,
       interval_days: repeat === 'interval' ? intervalDays : null,
       weekdays: repeat === 'weekly' ? (weekdays.length ? weekdays : [weekday(start)]) : [],
       day_of_month: repeat === 'monthly' ? Number(start.slice(8, 10)) : null,
       due_time: f.due_time || null, start_date: start, end_date: null, active: true,
-      assignment_mode: f.assignment_mode, color_id: f.color_id,
+      assignment_mode: assign.mode, color_id: f.color_id, assignee_ids: assign.mode === 'group' ? assign.groupIds : [],
     })
     await repo.generateRecurring(app.store!.id)
     notifyTemplatesChanged()
@@ -95,7 +107,8 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
 
   async function createSubs(p: Task) {
     for (const title of subs.split('\n').map((s) => s.trim()).filter(Boolean)) {
-      await app.createTask({ title, description: '', assignee_id: p.assignee_id, priority: p.priority, category: 'general', due_date: p.due_date, due_time: null, parent_id: p.id, assignment_mode: p.assignment_mode, work_date: null, work_start: null, work_end: null, color_id: p.color_id ?? null })
+      const c = await app.createTask({ title, description: '', assignee_id: p.assignee_id, priority: p.priority, category: 'general', due_date: p.due_date, due_time: null, parent_id: p.id, assignment_mode: p.assignment_mode, work_date: null, work_start: null, work_end: null, color_id: p.color_id ?? null })
+      if (c.assignment_mode === 'group') await repo.setAssignees(c.id, assign.mode === 'group' ? assign.groupIds : p.assignees.map((a) => a.user_id))
     }
     setSubs('')
   }
@@ -131,29 +144,21 @@ export function TaskSheet({ task, parentId, defaultDate, onClose }: { task?: Tas
           <input type="date" className="field" value={f.due_date ?? ''} onChange={(e) => set('due_date', e.target.value || null)} aria-label="期限日" />
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="label">担当</label>
-            <select className="field" value={assigneeValue} onChange={(e) => setAssignee(e.target.value)} aria-label="担当">
-              {app.isManager && !isChild && <option value={EVERYONE}>全員が実施</option>}
-              {app.isManager && <option value="">未割当（誰か1人）</option>}
-              {assignable.map((m) => <option key={m.user_id} value={m.user_id}>{m.profile.display_name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="label">優先度</label>
-            <div className="flex gap-1">
-              {(['high', 'medium', 'low'] as Priority[]).map((p) => (
-                <button key={p} type="button" onClick={() => set('priority', p)}
-                  className={`h-11 flex-1 rounded-xl border text-sm ${f.priority === p ? (p === 'high' ? 'border-red-500 bg-red-50 text-red-600' : 'border-ink bg-ink text-white') : 'border-neutral-200'}`}>
-                  {PRIORITY_LABEL[p]}
-                </button>
-              ))}
-            </div>
+        <div>
+          <label className="label">担当</label>
+          <AssigneePicker value={assign} onChange={onAssign} members={app.members} />
+        </div>
+        <div>
+          <label className="label">優先度</label>
+          <div className="flex gap-1">
+            {(['high', 'medium', 'low'] as Priority[]).map((p) => (
+              <button key={p} type="button" onClick={() => set('priority', p)}
+                className={`h-11 flex-1 rounded-xl border text-sm ${f.priority === p ? (p === 'high' ? 'border-red-500 bg-red-50 text-red-600' : 'border-ink bg-ink text-white') : 'border-neutral-200'}`}>
+                {PRIORITY_LABEL[p]}
+              </button>
+            ))}
           </div>
         </div>
-        {f.assignment_mode === 'everyone' && <p className="-mt-2 text-[11px] text-sky-700">スタッフ全員が各自で完了にします。各自のGoogleカレンダーにも入ります。</p>}
-        {f.assignment_mode === 'single' && !f.assignee_id && <p className="-mt-2 text-[11px] text-amber-700">誰か1人が完了にすれば完了です（Googleカレンダーには入りません）。</p>}
 
         {canRepeat && (
           <div>
