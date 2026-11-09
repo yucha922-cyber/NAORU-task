@@ -103,7 +103,9 @@ export function createDemoRepo(): Repo {
     if (!t) throw new Error('タスクが見つかりません')
     return t
   }
-  const everyoneRows = (storeId: string) =>
+  // 0006 の RLS と同じ: スタッフは自分の担当・自分が作成・店舗全体のタスクのみ
+  const canSee = (t: Task) => isManager(t.store_id) || t.assignee_id === db.session || t.created_by === db.session || t.assignment_mode !== 'single' || !t.assignee_id
+    const everyoneRows = (storeId: string) =>
     db.memberships.filter((m) => m.store_id === storeId && m.active).map((m) => ({ user_id: m.user_id, status: 'open' as const, completed_at: null }))
   const canEdit = (t: Task) => isManager(t.store_id) || t.assignee_id === db.session || t.assignee_id === null || t.created_by === db.session
   const log = (t: Task, action: ActivityAction, changes: Record<string, unknown> = {}) =>
@@ -170,11 +172,11 @@ export function createDemoRepo(): Repo {
     async listTasks(storeId, recentDays) {
       requireMember(storeId)
       const since = new Date(Date.now() - recentDays * 86400000).toISOString()
-      return db.tasks.filter((t) => t.store_id === storeId && !t.deleted_at && (t.status === 'open' || (t.completed_at ?? '') >= since))
+      return db.tasks.filter((t) => t.store_id === storeId && !t.deleted_at && canSee(t) && (t.status === 'open' || (t.completed_at ?? '') >= since))
     },
     async listHistory(storeId, offset, limit) {
       requireMember(storeId)
-      return db.tasks.filter((t) => t.store_id === storeId && !t.deleted_at && t.status === 'done')
+      return db.tasks.filter((t) => t.store_id === storeId && !t.deleted_at && t.status === 'done' && canSee(t))
         .sort((a, b) => (b.completed_at ?? '').localeCompare(a.completed_at ?? '')).slice(offset, offset + limit)
     },
     async createTask(storeId, input) {

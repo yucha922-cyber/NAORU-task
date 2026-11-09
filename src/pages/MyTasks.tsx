@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { TaskItem } from '../components/TaskItem'
 import { Empty, Tabs } from '../components/ui'
+import { StaffFilter } from '../components/StaffFilter'
 import { useApp } from '../lib/app'
 import { repo } from '../lib/client'
 import { effectiveTasks, inBucket, sortTasks, type Bucket } from '../lib/selectors'
@@ -22,9 +23,13 @@ export function MyTasks() {
   const app = useApp()
   const [view, setView] = useState<View>('today')
   const [scope, setScope] = useState<Scope>('mine')
+  const [staff, setStaff] = useState('')
   const uid = app.user!.id
   const scopes: Scope[] = app.isManager ? ['mine', 'store', 'everyone'] : ['mine', 'store']
-  const base = effectiveTasks(app.tasks, uid).filter((t) => inScope(t, scope, uid))
+  // 全スタッフ表示では、選んだスタッフの担当（本人の完了状態）で絞り込む
+  const base = (scope === 'everyone' && staff
+    ? effectiveTasks(app.tasks, staff).filter((t) => isAssignedTo(t, staff))
+    : effectiveTasks(app.tasks, uid).filter((t) => inScope(t, scope, uid)))
   const count = (b: Bucket) => base.filter((t) => inBucket(t, b)).length
   const list = view === 'history' ? [] : base.filter((t) => inBucket(t, view)).sort(sortTasks)
 
@@ -38,6 +43,7 @@ export function MyTasks() {
           ))}
         </div>
       </div>
+      {scope === 'everyone' && <StaffFilter members={app.members} value={staff} onChange={setStaff} />}
       <Tabs value={view} onChange={setView} items={[
         { value: 'overdue', label: '期限超過', count: count('overdue') },
         { value: 'today', label: '今日', count: count('today') },
@@ -46,7 +52,7 @@ export function MyTasks() {
         { value: 'all', label: 'すべて', count: count('all') },
         { value: 'history', label: '完了履歴' },
       ]} />
-      {view === 'history' ? <History scope={scope} /> : (
+      {view === 'history' ? <History scope={scope} staff={scope === 'everyone' ? staff : ''} /> : (
         <div className="space-y-2">
           {list.length ? list.map((t) => <TaskItem key={t.id} task={t} showAssignee={scope !== 'mine' || isUnassigned(t)} />) : <Empty>該当するタスクはありません</Empty>}
         </div>
@@ -57,7 +63,7 @@ export function MyTasks() {
 
 const PAGE = 30
 
-function History({ scope }: { scope: Scope }) {
+function History({ scope, staff }: { scope: Scope; staff: string }) {
   const app = useApp()
   const [rows, setRows] = useState<Task[]>([])
   const [more, setMore] = useState(true)
@@ -68,7 +74,7 @@ function History({ scope }: { scope: Scope }) {
   }
   // ページ単位で取得（全件取得しない）
   useEffect(() => { load(0).catch((e) => app.setToast(e.message)) }, [app.store?.id]) // eslint-disable-line react-hooks/exhaustive-deps
-  const shown = rows.filter((t) => scope === 'everyone' || (scope === 'store' ? isStoreWide(t) : isAssignedTo(t, app.user!.id) || t.completed_by === app.user!.id))
+  const shown = rows.filter((t) => scope === 'everyone' ? (!staff || isAssignedTo(t, staff) || t.completed_by === staff) : scope === 'store' ? isStoreWide(t) : isAssignedTo(t, app.user!.id) || t.completed_by === app.user!.id)
   return (
     <div className="space-y-2">
       {shown.map((t) => (
