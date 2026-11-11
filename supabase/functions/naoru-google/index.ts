@@ -3,8 +3,8 @@
 // ・Supabase の画面ではファイル名「index.ts」はそのまま。関数名（Function name）を naoru-google にする
 // ・本体のロジックは GitHub の公開リポジトリから「コミットを固定して」読み込む（内容が勝手に変わらない）
 import { createClient } from 'npm:@supabase/supabase-js@2'
-import { handleRequest } from 'https://raw.githubusercontent.com/yucha922-cyber/naoru-task/27e18676992a93b72f7d1346da83a521f082fc23/src/server/googleServer.ts'
-import { createSupabaseServerDb } from 'https://raw.githubusercontent.com/yucha922-cyber/naoru-task/27e18676992a93b72f7d1346da83a521f082fc23/src/server/supabaseServerDb.ts'
+import { handleRequest } from 'https://raw.githubusercontent.com/yucha922-cyber/naoru-task/7df0e82488a8f3fc0ddd06a6e4e70d567203cf60/src/server/googleServer.ts'
+import { createSupabaseServerDb } from 'https://raw.githubusercontent.com/yucha922-cyber/naoru-task/7df0e82488a8f3fc0ddd06a6e4e70d567203cf60/src/server/supabaseServerDb.ts'
 
 /** サーバー用の秘密キー（新方式 SUPABASE_SECRET_KEYS を優先し、無ければ旧方式） */
 function serverKey(): string {
