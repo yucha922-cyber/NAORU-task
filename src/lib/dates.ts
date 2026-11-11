@@ -1,4 +1,4 @@
-import type { Task } from './types'
+import type { Task } from './types.ts'
 
 export const TZ = 'Asia/Tokyo'
 

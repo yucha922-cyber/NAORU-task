@@ -1,5 +1,8 @@
 import type { Activity, CalendarLink, GoogleAccount, Invitation, Member, Role, Store, Task, TaskInput, TaskTemplate, TemplateInput } from './types'
 
+/** 自動同期のサーバー（Edge Function）が未設置・未設定 */
+export class ServerUnavailableError extends Error {}
+
 export interface SessionUser {
   id: string
   email: string
@@ -55,6 +58,8 @@ export interface Repo {
   saveCalendarLink(link: CalendarLink): Promise<void>
   deleteCalendarLink(taskId: string): Promise<void>
   deleteAllMyCalendarLinks(): Promise<void>
+  /** サーバー側の自動同期（Edge Function「naoru-google」）。未設置なら ServerUnavailableError */
+  googleServer(action: 'ping' | 'connect' | 'sync' | 'kick' | 'disconnect', payload?: Record<string, unknown>): Promise<Record<string, unknown>>
 
   /** バックアップ用: 店舗の全データをJSONで取得 */
   exportStore(storeId: string): Promise<Record<string, unknown[]>>

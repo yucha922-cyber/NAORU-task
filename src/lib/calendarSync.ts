@@ -9,9 +9,9 @@
  * - 「あるべき状態」と DB の対応表を毎回突き合わせる → 他人が編集・削除・担当変更した分も本人の次回同期で反映
  * - 予定の削除は対応表（task_calendar_links）に基づき、タスクが削除・担当外・期限なしになったら削除
  */
-import { addDays } from './dates'
-import { isAssignedTo, statusFor } from './responsibility'
-import type { CalendarLink, GoogleAccount, Task } from './types'
+import { addDays } from './dates.ts'
+import { isAssignedTo, statusFor } from './responsibility.ts'
+import type { CalendarLink, GoogleAccount, Task } from './types.ts'
 
 /** 完了した予定の色（グラファイト＝グレー）。Google側でこの色か緑にすると完了扱い */
 export const DONE_COLOR = '8'

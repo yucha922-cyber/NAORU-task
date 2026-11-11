@@ -2,7 +2,7 @@
  * デモモード（Supabase未設定時）。ブラウザの localStorage のみで動作し、外部通信は一切しない。
  * 権限ルールは Supabase の RLS と同等の簡易チェックを行う（本番の安全性は RLS が担保）。
  */
-import type { Repo, SessionUser } from './repo'
+import { ServerUnavailableError, type Repo, type SessionUser } from './repo'
 import type { Activity, ActivityAction, CalendarLink, GoogleAccount, Member, Membership, Profile, Role, Store, Task, TaskTemplate } from './types'
 import { addDays, todayStr } from './dates'
 import { pendingOccurrences } from './recurrence'
@@ -110,6 +110,8 @@ export function createDemoRepo(): Repo {
   const canEdit = (t: Task) => isManager(t.store_id) || t.assignee_id === db.session || t.assignee_id === null || t.created_by === db.session
   const log = (t: Task, action: ActivityAction, changes: Record<string, unknown> = {}) =>
     db.activity.unshift({ id: uuid(), store_id: t.store_id, task_id: t.id, task_title: t.title, actor_id: db.session, action, changes, created_at: now() })
+  // DB トリガー（mark_calendar_links_pending）と同じ: タスクが変わったら全員の対応表を「未同期」に
+  const markLinks = (taskId: string) => { for (const l of db.links) if (l.task_id === taskId) l.sync_status = 'pending' }
   const notify = () => listeners.forEach((l) => l(user()))
 
   const repo: Repo = {
@@ -205,7 +207,7 @@ export function createDemoRepo(): Repo {
         t.assignees = patch.assignment_mode === 'everyone' ? everyoneRows(t.store_id) : patch.assignment_mode === 'group' ? t.assignees : []
       }
       Object.assign(t, patch, { updated_at: now() })
-      if (Object.keys(changes).length) log(t, 'update', changes)
+      if (Object.keys(changes).length) { log(t, 'update', changes); markLinks(t.id) }
       save(); return t
     },
     async setDone(id, done) {
@@ -213,7 +215,7 @@ export function createDemoRepo(): Repo {
       if (!canEdit(t)) throw new Error('権限がありません')
       if ((t.status === 'done') === done) return t
       Object.assign(t, done ? { status: 'done', completed_at: now(), completed_by: db.session } : { status: 'open', completed_at: null, completed_by: null }, { updated_at: now() })
-      log(t, done ? 'complete' : 'reopen'); save(); return t
+      log(t, done ? 'complete' : 'reopen'); markLinks(t.id); save(); return t
     },
     async setMyDone(id, done) {
       const t = findTask(id)
@@ -243,7 +245,7 @@ export function createDemoRepo(): Repo {
       const t = findTask(id)
       if (!canEdit(t)) throw new Error('権限がありません')
       for (const c of db.tasks.filter((x) => x.parent_id === id && !x.deleted_at)) { c.deleted_at = now(); log(c, 'delete') }
-      t.deleted_at = now(); log(t, 'delete'); save()
+      t.deleted_at = now(); log(t, 'delete'); markLinks(t.id); save()
     },
 
     async listTemplates(storeId) { requireMember(storeId); return db.templates.filter((t) => t.store_id === storeId) },
@@ -303,6 +305,7 @@ export function createDemoRepo(): Repo {
       db.links = db.links.filter((l) => !(l.task_id === link.task_id && l.user_id === link.user_id)).concat(link); save()
     },
     async deleteCalendarLink(taskId) { db.links = db.links.filter((l) => !(l.task_id === taskId && l.user_id === db.session)); save() },
+    async googleServer() { throw new ServerUnavailableError('demo') },
     async deleteAllMyCalendarLinks() { db.links = db.links.filter((l) => l.user_id !== db.session); save() },
     async exportStore(storeId) {
       requireMember(storeId)
