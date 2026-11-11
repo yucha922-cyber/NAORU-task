@@ -80,8 +80,8 @@ Supabase の Edge Function（無料枠: 月50万回）と定期実行（pg_cron�
    - `GOOGLE_CLIENT_SECRET` … Google Cloud「Google Auth Platform」→「クライアント」→「NAORU TASK Web」のクライアントシークレット
    ※ シークレットはここにだけ入力し、チャット・GitHub・アプリには絶対に書かない
 3. **関数の設置**: 「Edge Functions」→「Deploy a new function」→「Via Editor」
-   - 名前: `naoru-google`
-   - `supabase/functions/naoru-google/index.ts` の内容を貼り付けて「Deploy」
+   - 画面下の「Function name」に `naoru-google` と入力（左のファイル名「index.ts」は変えない）
+   - エディタの中身（サンプルのコード）をすべて消し、`supabase/functions/naoru-google/index.ts` の内容を貼り付けて「Deploy」
    - 関数の設定で「Verify JWT（JWT の検証）」を **オフ**（関数の中でログイン確認と定期実行の合言葉を検証するため）
 4. **アプリ**: 各自「設定」→「Googleカレンダー連携」→「自動同期をオンにする」を1回押す
 
