@@ -1,3 +1,4 @@
+/// <reference types="node" />
 /**
  * サーバー側自動同期（Edge Function「naoru-google」）のテスト。
  * 本物の handleRequest を、偽 Google（OAuth・Calendar）と偽 DB で動かす。
@@ -7,6 +8,10 @@ import { FakeGoogle } from '../lib/fakeGoogle.testutil'
 import { eventIdFor } from '../lib/calendarSync'
 import type { CalendarLink, Task } from '../lib/types'
 import { decryptToken, encryptToken, handleRequest, type ServerAccount, type ServerDb, type ServerEnv } from './googleServer'
+import { b64url, unb64url } from './webpush'
+import { createECDH, randomBytes } from 'node:crypto'
+// @ts-expect-error 型定義なし
+import ece from 'http_ece'
 
 const YUSA = 'u-yusa', SHOKO = 'u-shoko', OUTSIDER = 'u-out'
 const SCOPE = 'https://www.googleapis.com/auth/calendar.app.created openid email'
@@ -59,6 +64,12 @@ class MemDb implements ServerDb {
       .filter((a) => !only || only.includes(a.user_id)).slice(0, limit).map((a) => a.user_id)
   }
   async usersInSameStores(uid: string) { return [...new Set(Object.values(this.members).filter((us) => us.includes(uid)).flat())] }
+  config = new Map<string, string>()
+  subs: { endpoint: string; p256dh: string; auth: string; user_id: string }[] = []
+  async getConfig(k: string) { return this.config.get(k) ?? null }
+  async setConfigIfMissing(k: string, v: string) { if (!this.config.has(k)) this.config.set(k, v); return this.config.get(k)! }
+  async listPushSubscriptions(uid?: string) { return this.subs.filter((x) => !uid || x.user_id === uid) }
+  async deletePushSubscription(e: string) { this.subs = this.subs.filter((x) => x.endpoint !== e) }
 }
 
 let g: FakeGoogle
@@ -193,6 +204,47 @@ describe('連携解除（disconnect）', () => {
     expect(db.tokens.has(YUSA)).toBe(false)
     expect(db.links.filter((l) => l.user_id === YUSA)).toHaveLength(0)
     expect(db.accounts.has(YUSA)).toBe(false)
+  })
+})
+
+describe('通知（Web Push）', () => {
+  const pushDevice = () => {
+    const ecdh = createECDH('prime256v1'); ecdh.generateKeys(); const auth = randomBytes(16)
+    return { ecdh, auth: b64url(new Uint8Array(auth)), p256dh: b64url(new Uint8Array(ecdh.getPublicKey())) }
+  }
+  it('毎朝の通知: 期限が近いタスクがある人の全端末に届き、無効な端末は削除。内容は端末でのみ復号できる', async () => {
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo' }).format(new Date())
+    db.tasks.push(task({ assignee_id: YUSA, due_date: today }), task({ assignee_id: YUSA, due_date: today }))
+    const phone = pushDevice(), oldPc = pushDevice(), shokoPhone = pushDevice()
+    db.subs.push(
+      { endpoint: 'https://push.example/phone', p256dh: phone.p256dh, auth: phone.auth, user_id: YUSA },
+      { endpoint: 'https://push.example/gone', p256dh: oldPc.p256dh, auth: oldPc.auth, user_id: YUSA },
+      { endpoint: 'https://push.example/shoko', p256dh: shokoPhone.p256dh, auth: shokoPhone.auth, user_id: SHOKO },
+    )
+    const delivered: { url: string; body: Uint8Array }[] = []
+    const base = env.fetchFn!
+    env.fetchFn = (async (u: string, init?: RequestInit) => {
+      if (String(u).startsWith('https://push.example/')) {
+        if (String(u).endsWith('/gone')) return new Response(null, { status: 410 })
+        delivered.push({ url: String(u), body: init!.body as Uint8Array }); return new Response(null, { status: 201 })
+      }
+      return base(u as never, init as never)
+    }) as typeof fetch
+    const r = await call('push-daily', {}, { 'x-naoru-cron': 'cron-secret' })
+    expect(r.status).toBe(200)
+    expect(delivered.map((d) => d.url)).toEqual(['https://push.example/phone']) // Shoko は該当タスクなし → 送らない
+    const msg = JSON.parse(ece.decrypt(Buffer.from(delivered[0].body), { version: 'aes128gcm', privateKey: phone.ecdh, authSecret: phone.auth }).toString())
+    expect(msg).toMatchObject({ title: '今日・明日のタスク', body: '今日 2件（タップして確認）', badge: 2 })
+    expect(db.subs.map((x) => x.endpoint)).not.toContain('https://push.example/gone')
+    expect(db.config.get('vapid_keys')).toMatch(/^v1:/) // 秘密鍵は暗号化して保存
+  })
+  it('毎朝の通知は合言葉がないと拒否 / テスト通知はログインが必要', async () => {
+    expect((await call('push-daily', {}, { 'x-naoru-cron': 'x' })).status).toBe(403)
+    expect((await call('push-test')).status).toBe(401)
+  })
+  it('公開鍵は毎回同じ（初回のみ生成）', async () => {
+    const a = (await call('push-key')).body.publicKey, b = (await call('push-key')).body.publicKey
+    expect(a).toBe(b); expect(unb64url(a).length).toBe(65)
   })
 })
 

@@ -12,6 +12,8 @@ import { createCalendarApi } from '../lib/calendarApi.ts'
 import { friendlyError, runSync, type SyncResult, type SyncStore } from '../lib/calendarSync.ts'
 import { todayStr } from '../lib/dates.ts'
 import type { CalendarLink, GoogleAccount, Task } from '../lib/types.ts'
+import { dueMessage, dueSummary } from '../lib/notify.ts'
+import { generateVapidKeys, sendPush, type PushSubscriptionRow, type VapidKeys } from './webpush.ts'
 
 export const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.app.created'
 const TOKEN_URL = 'https://oauth2.googleapis.com/token'
@@ -46,6 +48,12 @@ export interface ServerDb {
   accountsToSync(staleMinutes: number, limit: number, onlyUsers?: string[]): Promise<string[]>
   /** 同じ店舗のメンバー（kick 用） */
   usersInSameStores(uid: string): Promise<string[]>
+  // ----- 通知（Web Push） -----
+  getConfig(key: string): Promise<string | null>
+  /** 未設定のときだけ保存し、最終的な値を返す（同時実行対策） */
+  setConfigIfMissing(key: string, value: string): Promise<string>
+  listPushSubscriptions(uid?: string): Promise<PushSubscriptionRow[]>
+  deletePushSubscription(endpoint: string): Promise<void>
 }
 
 export interface ServerEnv {
@@ -155,6 +163,35 @@ export async function syncUser(env: ServerEnv, uid: string, force = false): Prom
   return runSync({ uid, storeId: '', api, store: storeFor(db, uid), tasks, today: todayStr('Asia/Tokyo'), verifyCalendar: true, force })
 }
 
+// ---------- 通知（Web Push） ----------
+export const PUSH_SUBJECT = 'https://yucha922-cyber.github.io/NAORU-task/'
+
+/** VAPID 鍵（初回に自動生成し、秘密鍵は暗号化して private_config に保存） */
+async function vapidKeys(env: ServerEnv): Promise<VapidKeys> {
+  const stored = await env.db.getConfig('vapid_keys')
+  if (stored) return JSON.parse(await decryptToken(stored, env.keyMaterial)) as VapidKeys
+  const fresh = await generateVapidKeys()
+  const winner = await env.db.setConfigIfMissing('vapid_keys', await encryptToken(JSON.stringify(fresh), env.keyMaterial))
+  return JSON.parse(await decryptToken(winner, env.keyMaterial)) as VapidKeys
+}
+
+/** 期限が近いタスクの通知を本人の全端末へ送る。戻り値: 送信できた端末数 */
+async function pushDueSummary(env: ServerEnv, uid: string, subs: PushSubscriptionRow[], keys: VapidKeys, test = false) {
+  const s = dueSummary(await env.db.tasksForUser(uid), uid, todayStr('Asia/Tokyo'))
+  const m = dueMessage(s)
+  if (!m && !test) return 0
+  const payload = m
+    ? { ...m, badge: s.total, tag: 'naoru-daily', url: './' }
+    : { title: 'NAORU TASK', body: '通知のテストです。期限が近いタスクはありません。', badge: 0, tag: 'naoru-test', url: './' }
+  let sent = 0
+  for (const sub of subs) {
+    const r = await sendPush(sub, payload, keys, PUSH_SUBJECT, env.fetchFn)
+    if (r === 'ok') sent++
+    if (r === 'gone') await env.db.deletePushSubscription(sub.endpoint) // 解除・アプリ削除された端末
+  }
+  return sent
+}
+
 // ---------- HTTP ----------
 function cors(req: Request, env: ServerEnv) {
   const origin = req.headers.get('Origin') ?? ''
@@ -197,7 +234,23 @@ export async function handleRequest(req: Request, env: ServerEnv): Promise<Respo
       return json(req, env, { users: users.length, results })
     }
 
-    if (body.action === 'ping') return json(req, env, { ok: true, version: 1 })
+    if (body.action === 'ping') return json(req, env, { ok: true, version: 2 })
+
+    // 通知用の公開鍵（公開して問題ない値）
+    if (body.action === 'push-key') return json(req, env, { publicKey: (await vapidKeys(env)).publicKey })
+
+    // 毎朝の通知（定期実行）
+    if (body.action === 'push-daily') {
+      const secret = await db.cronSecret()
+      const given = req.headers.get('x-naoru-cron') ?? ''
+      if (!secret || !safeEqual(given, secret)) return json(req, env, { error: 'forbidden' }, 403)
+      const keys = await vapidKeys(env)
+      const byUser = new Map<string, PushSubscriptionRow[]>()
+      for (const s of await db.listPushSubscriptions()) byUser.set(s.user_id, [...(byUser.get(s.user_id) ?? []), s])
+      let sent = 0
+      for (const [u, subs] of byUser) { try { sent += await pushDueSummary(env, u, subs, keys) } catch { /* 次の人へ */ } }
+      return json(req, env, { users: byUser.size, sent })
+    }
 
     // ----- ここから先はログインユーザー本人の操作 -----
     const jwt = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '')
@@ -229,6 +282,13 @@ export async function handleRequest(req: Request, env: ServerEnv): Promise<Respo
       await db.saveAccount(uid, { google_email: email, status: 'active', server_sync: true, needs_sync: true, last_error: null })
       const r = await syncUser(env, uid, true)
       return json(req, env, { email, result: r })
+    }
+
+    if (body.action === 'push-test') {
+      const subs = await db.listPushSubscriptions(uid)
+      if (!subs.length) return json(req, env, { error: 'この端末の通知が登録されていません。「通知をオンにする」を押してください。' }, 400)
+      const sent = await pushDueSummary(env, uid, subs, await vapidKeys(env), true)
+      return json(req, env, { sent })
     }
 
     if (body.action === 'sync') {
