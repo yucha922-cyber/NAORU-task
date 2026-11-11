@@ -169,6 +169,18 @@ describe('自動同期（cron / kick）', () => {
   })
 })
 
+describe('鍵の変更', () => {
+  it('サーバーの鍵が変わって復号できない → 再認証が必要と記録（エラーで止まらない）', async () => {
+    db.tasks.push(task({ assignee_id: YUSA }))
+    await connect('jwt-yusa', 'yusa@gmail.com')
+    env.keyMaterial = 'rotated-key'
+    db.accounts.get(YUSA)!.needs_sync = true
+    const r = await call('cron', {}, { 'x-naoru-cron': 'cron-secret' })
+    expect(r.body.results[YUSA]).toBe('reauth')
+    expect(db.accounts.get(YUSA)!.status).toBe('reauth_required')
+  })
+})
+
 describe('連携解除（disconnect）', () => {
   it('カレンダー削除・Googleの許可取り消し・トークン/リンク/アカウント削除', async () => {
     db.tasks.push(task({ assignee_id: YUSA }))

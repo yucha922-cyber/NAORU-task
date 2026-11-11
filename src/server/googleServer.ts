@@ -126,7 +126,12 @@ function storeFor(db: ServerDb, uid: string): SyncStore {
 async function accessTokenFor(env: ServerEnv, uid: string): Promise<string | null> {
   const tok = await env.db.getToken(uid)
   if (!tok) return null
-  const refresh = await decryptToken(tok.enc_refresh_token, env.keyMaterial)
+  let refresh: string
+  try {
+    refresh = await decryptToken(tok.enc_refresh_token, env.keyMaterial)
+  } catch {
+    throw new ReauthError('decrypt') // サーバーの鍵が変わった等 → 本人に再認証してもらう
+  }
   const j = await tokenRequest(env, { grant_type: 'refresh_token', refresh_token: refresh })
   return j.access_token
 }
