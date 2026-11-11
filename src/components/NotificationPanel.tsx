@@ -22,7 +22,7 @@ export function NotificationPanel() {
   const act = (fn: () => Promise<void>) => async () => {
     setBusy(true); setMsg(null)
     try { await fn() } catch (e) {
-      setMsg({ tone: 'err', text: e instanceof ServerUnavailableError ? '通知のサーバーが準備できていません。管理者に連絡してください。' : (e as Error).message })
+      setMsg({ tone: 'err', text: e instanceof ServerUnavailableError || /unknown action/.test((e as Error).message) ? '通知のサーバーが準備できていません。管理者に連絡してください。' : (e as Error).message })
     } finally { setBusy(false) }
   }
 
