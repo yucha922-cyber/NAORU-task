@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { GoogleSyncPanel } from '../components/GoogleSyncPanel'
+import { NotificationPanel } from '../components/NotificationPanel'
 import { AssigneePicker, validateAssignment } from '../components/AssigneePicker'
 import { notifyTemplatesChanged } from '../lib/recurrence'
 import { ColorPicker, Empty, Sheet } from '../components/ui'
@@ -29,6 +30,7 @@ export function Settings() {
         )}
       </section>
 
+      <NotificationPanel />
       <GoogleSyncPanel />
       {app.isManager && <Templates />}
       {app.role === 'admin' && <Members />}

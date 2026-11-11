@@ -201,6 +201,12 @@ export function createSupabaseRepo(url: string, key: string): Repo {
       }
       return data as Record<string, unknown>
     },
+    async savePushSubscription(sub) {
+      check(await sb.from('push_subscriptions').upsert({ ...sub, user_id: await uid(), user_agent: navigator.userAgent.slice(0, 200) }))
+    },
+    async deletePushSubscription(endpoint) {
+      check(await sb.from('push_subscriptions').delete().eq('endpoint', endpoint))
+    },
     async deleteAllMyCalendarLinks() {
       check(await sb.from('task_calendar_links').delete().eq('user_id', await uid()))
     },

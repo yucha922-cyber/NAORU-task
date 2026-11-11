@@ -1,4 +1,6 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { dueSummary } from '../lib/notify'
+import { setBadge } from '../lib/pwa'
 import { NavLink } from 'react-router-dom'
 import { useApp } from '../lib/app'
 import { todayStr } from '../lib/dates'
@@ -17,6 +19,8 @@ export function Layout({ children }: { children: ReactNode }) {
   const { store, tasks, user, toast, setToast } = useApp()
   const [adding, setAdding] = useState(false)
   const today = todayStr()
+  // ホーム画面アイコンのバッジ: 期限超過・今日・明日の自分のタスク数（毎朝の通知と同じ数え方）
+  useEffect(() => { if (user) setBadge(dueSummary(tasks, user.id, today).total) }, [tasks, user, today])
   const alerts = user ? tasks.filter((t) => isAssignedTo(t, user.id) && statusFor(t, user.id) === 'open' && t.due_date && t.due_date <= today).length : 0
 
   return (

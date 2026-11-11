@@ -306,6 +306,8 @@ export function createDemoRepo(): Repo {
     },
     async deleteCalendarLink(taskId) { db.links = db.links.filter((l) => !(l.task_id === taskId && l.user_id === db.session)); save() },
     async googleServer() { throw new ServerUnavailableError('demo') },
+    async savePushSubscription() { throw new Error('デモモードでは通知を使えません') },
+    async deletePushSubscription() {},
     async deleteAllMyCalendarLinks() { db.links = db.links.filter((l) => l.user_id !== db.session); save() },
     async exportStore(storeId) {
       requireMember(storeId)

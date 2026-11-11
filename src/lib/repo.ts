@@ -59,7 +59,10 @@ export interface Repo {
   deleteCalendarLink(taskId: string): Promise<void>
   deleteAllMyCalendarLinks(): Promise<void>
   /** サーバー側の自動同期（Edge Function「naoru-google」）。未設置なら ServerUnavailableError */
-  googleServer(action: 'ping' | 'connect' | 'sync' | 'kick' | 'disconnect', payload?: Record<string, unknown>): Promise<Record<string, unknown>>
+  googleServer(action: 'ping' | 'connect' | 'sync' | 'kick' | 'disconnect' | 'push-key' | 'push-test', payload?: Record<string, unknown>): Promise<Record<string, unknown>>
+  /** この端末の通知の登録（本人の分のみ） */
+  savePushSubscription(sub: { endpoint: string; p256dh: string; auth: string }): Promise<void>
+  deletePushSubscription(endpoint: string): Promise<void>
 
   /** バックアップ用: 店舗の全データをJSONで取得 */
   exportStore(storeId: string): Promise<Record<string, unknown[]>>

@@ -99,6 +99,23 @@ export function createSupabaseServerDb(sb: any): ServerDb {
       const rows = check(await q.order('last_sync_at', { ascending: true, nullsFirst: true }).limit(limit)) as { user_id: string }[]
       return rows.map((r) => r.user_id)
     },
+    async getConfig(key) {
+      const rows = check(await sb.from('private_config').select('value').eq('key', key))
+      return rows[0]?.value ?? null
+    },
+    async setConfigIfMissing(key, value) {
+      check(await sb.from('private_config').upsert({ key, value }, { onConflict: 'key', ignoreDuplicates: true }))
+      const rows = check(await sb.from('private_config').select('value').eq('key', key))
+      return rows[0]?.value ?? value
+    },
+    async listPushSubscriptions(uid) {
+      let q = sb.from('push_subscriptions').select('endpoint, p256dh, auth, user_id')
+      if (uid) q = q.eq('user_id', uid)
+      return check(await q.limit(2000))
+    },
+    async deletePushSubscription(endpoint) {
+      check(await sb.from('push_subscriptions').delete().eq('endpoint', endpoint))
+    },
     async usersInSameStores(uid) {
       const ms = check(await sb.from('memberships').select('store_id').eq('user_id', uid).eq('active', true)) as { store_id: string }[]
       if (!ms.length) return []
