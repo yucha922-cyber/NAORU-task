@@ -21,6 +21,7 @@ export function GoogleSyncPanel() {
 
   const state = !g.linked ? { label: '未連携', cls: 'bg-neutral-100 text-neutral-600' }
     : g.account?.status === 'reauth_required' ? { label: '再接続が必要', cls: 'bg-orange-50 text-orange-600' }
+      : g.serverMode ? { label: '自動同期中', cls: 'bg-emerald-50 text-emerald-700' }
       : g.connected ? { label: '接続中', cls: 'bg-emerald-50 text-emerald-700' }
         : { label: '連携済み（待機中）', cls: 'bg-neutral-100 text-neutral-600' }
 
@@ -60,8 +61,13 @@ export function GoogleSyncPanel() {
               </div>
             )}
             <div className="text-xs text-neutral-600">
-              {g.running ? '同期中…' : g.pending > 0 ? <>未反映のタスク <b className="text-orange-500">{g.pending}件</b></> : 'すべて反映済みです'}
+              {g.running ? '同期中…' : g.pending > 0 ? (g.serverMode ? <>反映待ち {g.pending}件（自動で反映されます）</> : <>未反映のタスク <b className="text-orange-500">{g.pending}件</b></>) : 'すべて反映済みです'}
             </div>
+            {!g.serverMode && g.serverAvailable && (
+              <button className="btn w-full border border-emerald-600 bg-emerald-50 text-emerald-800" disabled={busy} onClick={run(() => g.connect())}>
+                自動同期をオンにする（アプリを閉じていても反映）
+              </button>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <button className="btn-primary" disabled={busy || g.running} onClick={run(() => g.syncNow())}>{g.connected ? '今すぐ同期' : '接続して同期'}</button>
               <button className="btn-ghost" disabled={busy} onClick={run(() => g.connect({ forceConsent: true }))}>再認証</button>
@@ -74,6 +80,9 @@ export function GoogleSyncPanel() {
         )}
 
         {g.error && <p className="rounded-xl bg-red-50 p-3 text-xs leading-relaxed text-red-700">{g.error}</p>}
+        {!g.error && g.serverMode && g.account?.last_error && (
+          <p className="rounded-xl bg-red-50 p-3 text-xs leading-relaxed text-red-700">{g.account.last_error}</p>
+        )}
         {g.failedLinks.length > 0 && !g.error && (
           <p className="rounded-xl bg-orange-50 p-3 text-xs leading-relaxed text-orange-700">反映できていないタスクが {g.failedLinks.length} 件あります。「今すぐ同期」で再試行します。<br />{g.failedLinks[0].last_error}</p>
         )}
@@ -84,9 +93,15 @@ export function GoogleSyncPanel() {
             次にこのアプリを開いて同期したときに、アプリでも完了になります。
           </div>
         )}
-        <p className="text-[11px] leading-relaxed text-neutral-400">
-          ※ Googleの安全上の仕組みにより、接続は約1時間で切れます。アプリを閉じている間は反映されません。アプリを開いて「反映する」を押すと、その間の変更（院長による変更・削除も含む）がまとめて反映されます。
-        </p>
+        {g.serverMode ? (
+          <p className="text-[11px] leading-relaxed text-neutral-400">
+            ※ 自動同期中です。アプリを閉じていても、タスクの変更（他のスタッフ・院長による変更も含む）は数分以内にGoogleカレンダーへ反映され、Google側の完了操作も5分ごとに取り込まれます。
+          </p>
+        ) : (
+          <p className="text-[11px] leading-relaxed text-neutral-400">
+            ※ Googleの安全上の仕組みにより、接続は約1時間で切れます。アプリを閉じている間は反映されません。アプリを開いて「反映する」を押すと、その間の変更（院長による変更・削除も含む）がまとめて反映されます。
+          </p>
+        )}
       </div>
     </section>
   )
@@ -97,15 +112,16 @@ export function GoogleSyncBanner() {
   const g = useCalendarSync()
   const [busy, setBusy] = useState(false)
   if (!g.configured || !g.linked) return null
-  if (g.error) {
+  const serverProblem = g.serverMode && g.account?.status === 'reauth_required' ? g.account.last_error : null
+  if (g.error || serverProblem) {
     return (
       <div className="card flex items-center gap-3 border-red-200 bg-red-50/60 p-3 text-xs text-red-700">
-        <span className="flex-1 leading-relaxed">{g.error}</span>
+        <span className="flex-1 leading-relaxed">{g.error ?? serverProblem}</span>
         <Link to="/settings" className="shrink-0 underline">設定へ</Link>
       </div>
     )
   }
-  if (g.connected || g.pending === 0) return null
+  if (g.serverMode || g.connected || g.pending === 0) return null
   return (
     <div className="card flex items-center gap-3 p-3">
       <span className="flex-1 text-xs leading-relaxed text-neutral-600">Googleカレンダーに未反映のタスクが <b className="text-orange-500">{g.pending}件</b> あります</span>

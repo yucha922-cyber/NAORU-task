@@ -1,4 +1,4 @@
-import type { Task, TaskStatus } from './types'
+import type { Task, TaskStatus } from './types.ts'
 
 /**
  * そのユーザーが「自分の作業」として扱うべきタスクか。

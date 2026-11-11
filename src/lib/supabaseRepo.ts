@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import type { Repo, SessionUser } from './repo'
+import { ServerUnavailableError, type Repo, type SessionUser } from './repo'
 import type { Activity, CalendarLink, GoogleAccount, Invitation, Member, Role, Store, Task, TaskTemplate } from './types'
 
 const JA: [RegExp, string][] = [
@@ -188,6 +188,18 @@ export function createSupabaseRepo(url: string, key: string): Repo {
     },
     async deleteCalendarLink(taskId) {
       check(await sb.from('task_calendar_links').delete().eq('task_id', taskId).eq('user_id', await uid()))
+    },
+    async googleServer(action, payload = {}) {
+      const { data, error } = await sb.functions.invoke('naoru-google', { body: { action, ...payload } })
+      if (error) {
+        const ctx = (error as { context?: Response }).context
+        const status = ctx?.status
+        if (status === 404 || (!status && /Failed to send|fetch/i.test(error.message))) throw new ServerUnavailableError('server unavailable')
+        let msg = error.message
+        try { const j = await ctx?.json(); if (j?.error) msg = j.error } catch { /* 本文なし */ }
+        throw new Error(msg)
+      }
+      return data as Record<string, unknown>
     },
     async deleteAllMyCalendarLinks() {
       check(await sb.from('task_calendar_links').delete().eq('user_id', await uid()))

@@ -10,6 +10,7 @@ import { useApp } from './app'
 import * as gcal from './calendar'
 import { countPending, friendlyError, runSync, type SyncResult, type SyncStore } from './calendarSync'
 import { repo } from './client'
+import { ServerUnavailableError } from './repo'
 import { todayStr } from './dates'
 import type { CalendarLink, GoogleAccount } from './types'
 
@@ -37,6 +38,10 @@ interface CalendarSyncState {
   syncedCount: number
   lastResult: SyncResult | null
   error: string | null
+  /** サーバー側で自動同期中（アプリを閉じていても反映） */
+  serverMode: boolean
+  /** 自動同期サーバーが使えるか（null=確認中） */
+  serverAvailable: boolean | null
   connect(opts?: { forceConsent?: boolean }): Promise<void>
   syncNow(): Promise<void>
   disconnect(): Promise<void>
@@ -55,6 +60,7 @@ export function CalendarSyncProvider({ children }: { children: ReactNode }) {
   const [running, setRunning] = useState(false)
   const [lastResult, setLastResult] = useState<SyncResult | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [serverAvailable, setServerAvailable] = useState<boolean | null>(null)
   const busy = useRef(false)
   const rerun = useRef(false)
   const verified = useRef(false)
@@ -78,7 +84,39 @@ export function CalendarSyncProvider({ children }: { children: ReactNode }) {
     setAccount(null)
     setLinks([])
     refresh()
+    // 自動同期サーバー（Edge Function）が設置済みかを確認
+    if (uid && repo.mode === 'supabase') repo.googleServer('ping').then(() => setServerAvailable(true)).catch(() => setServerAvailable(false))
+    else setServerAvailable(false)
   }, [uid, refresh])
+
+  const serverMode = !!account?.server_sync && account.status !== 'disconnected'
+  const serverModeRef = useRef(serverMode)
+  serverModeRef.current = serverMode
+
+  /** サーバー側で同期（本人分）。結果を画面に反映 */
+  const serverSync = useCallback(async () => {
+    if (busy.current) return
+    busy.current = true
+    setRunning(true)
+    try {
+      const res = await repo.googleServer('sync')
+      const r = res.result as SyncResult | { skipped: string } | undefined
+      if (r && 'synced' in r) {
+        setLastResult(r)
+        setError(r.stopped ? r.message : null)
+        if (r.completedFromGoogle > 0) {
+          app.setToast({ message: `Googleカレンダーで完了にしたタスク${r.completedFromGoogle}件を、アプリでも完了にしました`, tone: 'success' })
+          void app.reload()
+        }
+      }
+    } catch (e) {
+      setError(friendlyError(e))
+    } finally {
+      busy.current = false
+      setRunning(false)
+      await refresh()
+    }
+  }, [app, refresh])
 
   const sync = useCallback(async (force = false) => {
     if (!uid || !app.store) return
@@ -112,12 +150,19 @@ export function CalendarSyncProvider({ children }: { children: ReactNode }) {
   // タスクの追加・編集・完了・再取得のたびに（接続中なら）自動反映。3秒まとめて送信
   const syncRef = useRef(sync)
   syncRef.current = sync
+  const refreshRef = useRef(refresh)
+  refreshRef.current = refresh
   const { onTasksChanged } = app
   useEffect(() => {
     let timer: number | undefined
     const off = onTasksChanged(() => {
       clearTimeout(timer)
-      timer = window.setTimeout(() => { if (uid && gcal.hasToken(uid)) void syncRef.current() }, 3000)
+      timer = window.setTimeout(() => {
+        if (serverModeRef.current) {
+          // 自動同期: 変更した本人だけでなく、担当になった他のスタッフの分もサーバーがすぐ反映
+          repo.googleServer('kick').then(() => refreshRef.current()).catch(() => { /* 5分ごとの定期実行で反映 */ })
+        } else if (uid && gcal.hasToken(uid)) void syncRef.current()
+      }, 3000)
     })
     return () => { off(); clearTimeout(timer) }
   }, [onTasksChanged, uid])
@@ -126,6 +171,7 @@ export function CalendarSyncProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const h = () => {
       if (document.visibilityState !== 'visible' || !uid) return
+      if (serverModeRef.current) { void refresh(); return }
       const ok = gcal.hasToken(uid)
       setConnected(ok)
       if (ok) void sync(); else void refresh()
@@ -142,12 +188,30 @@ export function CalendarSyncProvider({ children }: { children: ReactNode }) {
 
   const value: CalendarSyncState = {
     configured: gcal.isConfigured(),
-    account, linked, connected, running, pending, lastResult, error,
+    account, linked, connected: connected || serverMode, running, pending, lastResult, error, serverMode, serverAvailable,
     failedLinks: links.filter((l) => l.sync_status === 'error' || l.sync_status === 'reauth_required'),
     syncedCount: links.filter((l) => l.sync_status === 'synced').length,
     async connect(opts) {
       if (!uid) return
       setError(null)
+      // 自動同期（サーバー）が使えるならそちらで連携。一度許可すれば以後はアプリを閉じていても反映される
+      if (serverAvailable) {
+        try {
+          const code = await gcal.requestOfflineCode(linked ? account!.google_email : null)
+          setRunning(true)
+          const res = await repo.googleServer('connect', { code })
+          const r = res.result as SyncResult | undefined
+          if (r && 'synced' in r) setLastResult(r)
+          setConnected(true)
+          await refresh()
+          return
+        } catch (e) {
+          if (!(e instanceof ServerUnavailableError)) { setError(friendlyError(e)); return }
+          setServerAvailable(false) // サーバー未設置 → 従来の方式で続行
+        } finally {
+          setRunning(false)
+        }
+      }
       try {
         const email = await gcal.connect(uid, { expectedEmail: linked ? account!.google_email : null, forceConsent: opts?.forceConsent || !linked })
         if (!linked) await repo.saveGoogleAccount({ google_email: email, status: 'active', calendar_id: account?.calendar_id ?? null, last_error: null })
@@ -161,12 +225,27 @@ export function CalendarSyncProvider({ children }: { children: ReactNode }) {
     },
     async syncNow() {
       if (!uid) return
+      if (serverMode) return serverSync()
       if (!gcal.hasToken(uid)) return value.connect()
       await sync(true)
     },
     async disconnect() {
       if (!uid) return
       setError(null)
+      if (serverMode) {
+        try {
+          await repo.googleServer('disconnect') // サーバーがカレンダー削除・許可取り消し・保存トークン削除まで行う
+        } catch (e) {
+          if (!confirm(`Google側の解除に失敗しました（${friendlyError(e)}）。\nアプリ側の連携情報だけ解除しますか？`)) return
+          await repo.deleteAllMyCalendarLinks()
+          await repo.deleteGoogleAccount()
+        }
+        gcal.revoke()
+        setConnected(false)
+        setLastResult(null)
+        await refresh()
+        return
+      }
       try {
         if (!gcal.hasToken(uid)) await gcal.connect(uid, { expectedEmail: account?.google_email })
         if (account?.calendar_id) await gcal.googleCalendarApi.deleteCalendar(account.calendar_id)

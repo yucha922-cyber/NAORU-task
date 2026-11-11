@@ -142,6 +142,8 @@ export interface GoogleAccount {
   last_success_count: number
   last_failure_count: number
   last_error: string | null
+  /** サーバー側で自動同期中（0007 適用後） */
+  server_sync?: boolean
 }
 
 export const ROLE_LABEL: Record<Role, string> = { staff: 'スタッフ', manager: '院長', admin: '管理者' }

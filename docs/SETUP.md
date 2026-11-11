@@ -68,3 +68,21 @@ SQL Editor で `supabase/migrations/0002_calendar_sync_and_everyone_tasks.sql` �
 - Google の仕様で、テスト中アプリの許可は **同意から7日で失効** します。失効後はアプリの「再認証」で再許可（数タップ）
 - これを解消するには「アプリを公開」→ 本番化が必要。`calendar.app.created` が機微なスコープに分類される場合は Google の審査（無料。プライバシーポリシーページ等が必要）を受けるまで「未確認のアプリ」警告が表示されます。分類は Cloud Console のスコープ追加画面で確認してください
 - アクセストークンは約1時間で切れ、ブラウザのメモリにのみ保持（保存しない）。アプリを閉じている間は同期されません。開いて「反映する」を押すと、その間の変更（他スタッフ・院長による変更や削除も含む）がまとめて反映されます
+
+## 4. Googleカレンダーの自動同期（アプリを閉じていても反映・0円）
+
+Supabase の Edge Function（無料枠: 月50万回）と定期実行（pg_cron）を使い、サーバー側で同期します。
+
+1. **SQL**: SQL Editor で `supabase/migrations/0007_server_google_sync.sql` を実行
+   （暗号化トークン用の表・変更検知・5分ごとの定期実行・毎日の繰り返しタスク生成を登録）
+2. **秘密情報（Secrets）**: ダッシュボード「Edge Functions」→「Secrets」で次の2つを追加
+   - `GOOGLE_CLIENT_ID` … Google のクライアントID（`xxxx.apps.googleusercontent.com`）
+   - `GOOGLE_CLIENT_SECRET` … Google Cloud「Google Auth Platform」→「クライアント」→「NAORU TASK Web」のクライアントシークレット
+   ※ シークレットはここにだけ入力し、チャット・GitHub・アプリには絶対に書かない
+3. **関数の設置**: 「Edge Functions」→「Deploy a new function」→「Via Editor」
+   - 名前: `naoru-google`
+   - `supabase/functions/naoru-google/index.ts` の内容を貼り付けて「Deploy」
+   - 関数の設定で「Verify JWT（JWT の検証）」を **オフ**（関数の中でログイン確認と定期実行の合言葉を検証するため）
+4. **アプリ**: 各自「設定」→「Googleカレンダー連携」→「自動同期をオンにする」を1回押す
+
+安全設計: Google のリフレッシュトークンは AES-GCM で暗号化して `google_tokens` に保存し、ログインユーザーからは読めません（サービスロールの関数のみ）。暗号鍵はサービスロールキーから導出するため、DB の内容だけが漏れても復号できません。
